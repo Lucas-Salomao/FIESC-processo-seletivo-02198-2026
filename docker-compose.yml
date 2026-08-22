@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fiesc
+      POSTGRES_PASSWORD: fiesc
+      POSTGRES_DB: fiesc
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fiesc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  api:
+    build: .
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://fiesc:fiesc@postgres:5432/fiesc
+      MQTT_HOST: mosquitto
+      CHROMA_DIR: /app/data/chroma
+      ARTIFACTS_DIR: /app/artifacts
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data/chroma:/app/data/chroma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  worker:
+    build: .
+    command: python -m src.ingestion.mqtt_worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://fiesc:fiesc@postgres:5432/fiesc
+      MQTT_HOST: mosquitto
+      API_URL: http://api:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      api:
+        condition: service_started
+
+  ui:
+    build: .
+    command: streamlit run src/ui/app.py --server.port 8501 --server.address 0.0.0.0
+    env_file: .env
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  pgdata:
