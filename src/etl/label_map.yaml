@@ -1,0 +1,58 @@
+# Canonicalização dos rótulos brutos de `fault` do banner.csv.
+#
+# O dataset tem ~150 rótulos distintos, misturando: variantes de sessão de
+# coleta (sufixos _2, _3, _pos_2, _carga, _adxl_0, prefixo new_), typos reais
+# (ddesbalanceado, cockecocked, mortor_desligado, normla, desbanlanceado,
+# desabalanceado, desabanceado) e estados operacionais que NÃO são falha.
+#
+# Estratégia: regras ordenadas de regex — a PRIMEIRA que casar vence.
+# Regras de falha vêm antes das de estado (ex.: "rolamento_outer_novo_teste"
+# precisa cair em rolamento_outer, não em "teste").
+#
+# Auditoria: scripts/ingest_data.py falha se qualquer rótulo do CSV não casar
+# com nenhuma regra (nada é descartado silenciosamente).
+
+families:
+  rolamento_inner:        { is_fault: true,  display: "Defeito na pista interna do rolamento (BPFI)" }
+  rolamento_outer:        { is_fault: true,  display: "Defeito na pista externa do rolamento (BPFO)" }
+  rolamento_ball:         { is_fault: true,  display: "Defeito nos elementos rolantes (BSF)" }
+  rolamento_combination:  { is_fault: true,  display: "Defeito combinado no rolamento" }
+  desbalanceamento:       { is_fault: true,  display: "Desbalanceamento do rotor" }
+  desalinhamento:         { is_fault: true,  display: "Desalinhamento de eixos" }
+  correia:                { is_fault: true,  display: "Falha na transmissão por correia" }
+  polia:                  { is_fault: true,  display: "Falha na polia" }
+  cocked_rotor:           { is_fault: true,  display: "Rotor inclinado (cocked rotor)" }
+  eccentric_rotor:        { is_fault: true,  display: "Rotor excêntrico" }
+  ventoinha:              { is_fault: true,  display: "Falha na ventoinha" }
+  falta_fase:             { is_fault: true,  display: "Falta de fase no motor" }
+  normal:                 { is_fault: false, display: "Operação normal" }
+  baseline:               { is_fault: false, display: "Coleta de baseline" }
+  teste:                  { is_fault: false, display: "Registro de teste" }
+  acelerando:             { is_fault: false, display: "Máquina acelerando (transiente)" }
+  motor_desligado:        { is_fault: false, display: "Motor desligado" }
+
+# Ordem importa: primeira regra que casar vence.
+rules:
+  - { pattern: "inner",                       family: rolamento_inner }
+  - { pattern: "outer",                       family: rolamento_outer }
+  - { pattern: "ball",                        family: rolamento_ball }
+  - { pattern: "comb",                        family: rolamento_combination }
+  # desb(alanceado), typos: ddesb-, dedesb-, desbanlanceado, desabalanceado, desabanceado
+  - { pattern: "desb|abal|abanc|balanc",      family: desbalanceamento }
+  - { pattern: "desalinh",                    family: desalinhamento }
+  - { pattern: "falta_fase",                  family: falta_fase }
+  - { pattern: "eccentric",                   family: eccentric_rotor }
+  - { pattern: "ventoinha",                   family: ventoinha }
+  - { pattern: "correia",                     family: correia }
+  - { pattern: "polia",                       family: polia }
+  # cocked_rotor, cocked_adxl_0, typo cockecocked_adxl_0
+  - { pattern: "cock",                        family: cocked_rotor }
+  # --- estados (avaliados por último) ---
+  - { pattern: "baseline",                    family: baseline }
+  - { pattern: "acelerando",                  family: acelerando }
+  # motor_desligado + typo mortor_desligado_novo
+  - { pattern: "desligado",                   family: motor_desligado }
+  # normal + typo normla_carga_3_3
+  - { pattern: "norm",                        family: normal }
+  # teste, new_teste, new_tes
+  - { pattern: "^(new_)?tes",                 family: teste }
