@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Segredos e credenciais
+.env
+*.json.key
+credentials/
+service-account*.json
+
+# Artefatos gerados
+artifacts/*.joblib
+artifacts/*.pkl
+data/chroma/
+*.log
+
+# Dados brutos (fornecidos pela prova — manter fora do versionamento)
+documentos/banner.csv
+documentos/banner.xlsx
+
+# IDE / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Enunciado da prova — documento do avaliador, não faz parte do código-fonte
+documentos/Prova*
