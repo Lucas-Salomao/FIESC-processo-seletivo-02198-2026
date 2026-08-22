@@ -1,0 +1,42 @@
+# Cobertura documental INICIAL: documento → título e famílias de falha cobertas.
+# Usado por scripts/ingest_docs.py para a carga inicial da base documental.
+#
+# Em runtime, a fonte de verdade da cobertura é o próprio ChromaDB (uma família
+# é documentada se possui chunks indexados) — assim, documentos cadastrados
+# via POST /api/v1/documents passam a cobrir a família imediatamente.
+#
+# Famílias SEM documento (eccentric_rotor, ventoinha, falta_fase) acionam o
+# fluxo "problema não documentado → sugerir registro" exigido pelo enunciado.
+
+Doc1.pdf:
+  title: "Procedimento para Diagnóstico e Correção de Problemas em Rolamentos"
+  families:
+    - rolamento_inner
+    - rolamento_outer
+    - rolamento_ball
+    - rolamento_combination
+
+Doc2.pdf:
+  title: "Procedimento para Correção de Desalinhamento em Motor Elétrico"
+  families:
+    - desalinhamento
+
+Doc3.pdf:
+  title: "Procedimento para Correção de Desbalanceamento em Máquinas Rotativas"
+  families:
+    - desbalanceamento
+
+Doc4.pdf:
+  title: "Procedimento para Diagnóstico e Correção de Problemas em Sistemas de Transmissão por Correias"
+  families:
+    - correia
+
+Doc5.pdf:
+  title: "Procedimento para Diagnóstico e Correção de Problemas em Polias de Sistemas Rotativos"
+  families:
+    - polia
+
+Doc6.pdf:
+  title: "Procedimento para Diagnóstico e Correção de Problemas de Rotor Inclinado (Cocked Rotor)"
+  families:
+    - cocked_rotor
