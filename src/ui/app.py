@@ -1,6 +1,9 @@
 """Frontend Streamlit — consome exclusivamente a API FastAPI.
 
-Abas: Dashboard | Diagnóstico | Chat | Documentos
+Navegação na barra lateral: Dashboard (com 4 painéis), Diagnóstico, Chat
+e Documentos. Só a seção ativa é renderizada, então cada painel busca apenas
+os dados de que precisa.
+
 Execução local:  streamlit run src/ui/app.py
 """
 
@@ -58,25 +61,58 @@ EXAMPLE_EVENT = {
 }
 
 
-def render_health_sidebar() -> None:
+SECTION_DASHBOARD = "Dashboard"
+SECTIONS = {
+    SECTION_DASHBOARD: "📊",
+    "Diagnóstico": "🔎",
+    "Chat": "💬",
+    "Documentos": "📄",
+}
+DASHBOARD_PANELS = ("Visão geral", "Severidade & Física", "Assinaturas", "Qualidade do modelo")
+
+
+def render_sidebar() -> tuple[str, str | None]:
+    """Navegação lateral. Devolve (seção, painel) — painel só para o Dashboard."""
     with st.sidebar:
-        st.title("🛠️ Manutenção Prescritiva")
-        try:
-            health = api_get("/health")
-            st.success("API online")
-            st.caption(f"Modelo LLM: `{health['chat_model']}`")
-            st.caption(f"Embeddings: `{health['embedding_model']}`")
-            st.caption(
-                f"Artefatos ML: {'✅' if health['artifacts_loaded'] else '❌ rode src.ml.train'}"
-            )
-            st.caption(f"Famílias documentadas: {len(health['documented_families'])}")
-        except requests.RequestException:
-            st.error(f"API indisponível em {API_URL}")
-            st.stop()
+        st.markdown("#### Manutenção Prescritiva")
+        section = st.radio(
+            "Seção",
+            list(SECTIONS),
+            format_func=lambda s: f"{SECTIONS[s]}  {s}",
+            label_visibility="collapsed",
+            key="nav_section",
+        )
+
+        panel = None
+        if section == SECTION_DASHBOARD:
+            _, items = st.columns([1, 11])  # recuo visual do subnível
+            with items:
+                panel = st.radio(
+                    "Painel",
+                    DASHBOARD_PANELS,
+                    label_visibility="collapsed",
+                    key="nav_panel",
+                )
+
+        st.divider()
+        _render_status()
+    return section, panel
 
 
-def tab_dashboard() -> None:
-    dashboard.render()
+def _render_status() -> None:
+    """Estado do sistema — recolhido por padrão para não competir com a navegação."""
+    try:
+        health = api_get("/health")
+    except requests.RequestException:
+        st.error(f"API indisponível em {API_URL}")
+        st.stop()
+
+    ok = health["artifacts_loaded"]
+    with st.expander("🟢 Sistema online" if ok else "🟡 Sistema parcial", expanded=False):
+        st.caption(f"Modelo LLM: `{health['chat_model']}`")
+        st.caption(f"Embeddings: `{health['embedding_model']}`")
+        st.caption(f"Artefatos ML: {'✅' if ok else '❌ execute `python -m src.ml.train`'}")
+        st.caption(f"Famílias documentadas: {len(health['documented_families'])}")
 
 
 def render_diagnosis(data: dict) -> None:
@@ -273,13 +309,13 @@ def tab_documents() -> None:
             st.error(f"Erro {response.status_code}: {response.text}")
 
 
-render_health_sidebar()
-tabs = st.tabs(["📊 Dashboard", "🔎 Diagnóstico", "💬 Chat", "📄 Documentos"])
-with tabs[0]:
-    tab_dashboard()
-with tabs[1]:
+_section, _panel = render_sidebar()
+
+if _section == SECTION_DASHBOARD:
+    dashboard.render(_panel)
+elif _section == "Diagnóstico":
     tab_diagnose()
-with tabs[2]:
+elif _section == "Chat":
     tab_chat()
-with tabs[3]:
+else:
     tab_documents()

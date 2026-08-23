@@ -50,39 +50,32 @@ def _label(feature: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# Entrada
+# Entrada — um painel por vez, escolhido na navegação lateral
 # --------------------------------------------------------------------------
-def render() -> None:
-    try:
-        stats = api_get("/stats")
-    except requests.RequestException as exc:
-        st.warning(f"Sem dados — execute `python scripts/ingest_data.py` ({exc})")
-        return
+PANEL_OVERVIEW = "Visão geral"
+PANEL_SEVERITY = "Severidade & Física"
+PANEL_SIGNATURES = "Assinaturas"
+PANEL_QUALITY = "Qualidade do modelo"
 
-    per_family = pd.DataFrame(stats["per_family"])
-    if per_family.empty:
-        st.info("Banco vazio — execute a ingestão do banner.csv.")
-        return
+_EMPTY_SEVERITY = {"records": [], "baseline_by_rpm": {}}
+_EMPTY_SIGNATURES = {"signatures": [], "discriminative_power": []}
 
-    severity = _safe_get("/analytics/severity", {"records": [], "baseline_by_rpm": {}})
-    signatures = _safe_get("/analytics/signatures", {"signatures": [], "discriminative_power": []})
-    quality = _safe_get("/analytics/model-quality", {})
 
-    sev_df = pd.DataFrame(severity["records"])
-    documented = set(stats["documented_families"])
-    selection = _global_filters(per_family, sev_df)
+def render(panel: str | None) -> None:
+    """Renderiza só o painel ativo.
 
-    tabs = st.tabs(
-        ["📊 Visão geral", "📈 Severidade & Física", "🔬 Assinaturas", "🎯 Qualidade do modelo"]
-    )
-    with tabs[0]:
-        _panel_overview(stats, per_family, sev_df, documented)
-    with tabs[1]:
-        _panel_severity(sev_df, documented, selection)
-    with tabs[2]:
-        _panel_signatures(signatures, selection)
-    with tabs[3]:
-        _panel_model_quality(quality)
+    Cada painel busca apenas os dados de que precisa: como a navegação
+    mostra um de cada vez, deixamos de disparar as três consultas
+    analíticas a cada rerun.
+    """
+    if panel == PANEL_SEVERITY:
+        _render_severity()
+    elif panel == PANEL_SIGNATURES:
+        _render_signatures()
+    elif panel == PANEL_QUALITY:
+        _panel_model_quality(_safe_get("/analytics/model-quality", {}))
+    else:
+        _render_overview()
 
 
 def _safe_get(path: str, fallback: dict) -> dict:
@@ -92,16 +85,76 @@ def _safe_get(path: str, fallback: dict) -> dict:
         return fallback
 
 
-def _global_filters(per_family: pd.DataFrame, sev_df: pd.DataFrame) -> dict:
+def _load_stats() -> dict | None:
+    """Estatísticas base; None quando não há dados para exibir."""
+    try:
+        stats = api_get("/stats")
+    except requests.RequestException as exc:
+        st.warning(f"Sem dados — execute `python scripts/ingest_data.py` ({exc})")
+        return None
+    if not stats.get("per_family"):
+        st.info("Banco vazio — execute a ingestão do banner.csv.")
+        return None
+    return stats
+
+
+def _severity_frame() -> pd.DataFrame:
+    return pd.DataFrame(_safe_get("/analytics/severity", _EMPTY_SEVERITY)["records"])
+
+
+def _render_overview() -> None:
+    stats = _load_stats()
+    if stats is None:
+        return
+    _panel_overview(
+        stats,
+        pd.DataFrame(stats["per_family"]),
+        _severity_frame(),
+        set(stats["documented_families"]),
+    )
+
+
+def _render_severity() -> None:
+    stats = _load_stats()
+    if stats is None:
+        return
+    sev_df = _severity_frame()
+    if sev_df.empty:
+        st.info("Análise de severidade indisponível — verifique a API e a ingestão.")
+        return
+    _panel_severity(sev_df, set(stats["documented_families"]), _filter_row(stats, sev_df))
+
+
+def _render_signatures() -> None:
+    stats = _load_stats()
+    if stats is None:
+        return
+    selection = _filter_row(stats, _severity_frame())
+    _panel_signatures(_safe_get("/analytics/signatures", _EMPTY_SIGNATURES), selection)
+
+
+def _filter_row(stats: dict, sev_df: pd.DataFrame) -> dict:
+    """Filtros na própria página, em uma linha acima dos gráficos.
+
+    As chaves são compartilhadas entre os painéis de Severidade e
+    Assinaturas — como só um renderiza por vez, a seleção é preservada
+    ao alternar entre eles.
+    """
+    per_family = pd.DataFrame(stats["per_family"])
     fault_names = sorted(per_family.loc[per_family["is_fault"], "family"])
     rpms = sorted(sev_df["rpm"].unique().tolist()) if not sev_df.empty else []
-    with st.sidebar:
-        st.divider()
-        st.caption("**Filtros do dashboard**")
-        families = st.multiselect("Famílias de falha", fault_names, default=fault_names)
-        chosen_rpms = st.multiselect(
-            "Regimes de rotação (RPM)", rpms, default=rpms, format_func=lambda r: f"{int(r)} rpm"
-        )
+
+    left, right = st.columns([3, 2])
+    families = left.multiselect(
+        "Famílias de falha", fault_names, default=fault_names, key="flt_families"
+    )
+    chosen_rpms = right.multiselect(
+        "Regimes de rotação",
+        rpms,
+        default=rpms,
+        format_func=lambda r: f"{int(r)} rpm",
+        key="flt_rpms",
+    )
     return {"families": families or fault_names, "rpms": chosen_rpms or rpms}
 
 
