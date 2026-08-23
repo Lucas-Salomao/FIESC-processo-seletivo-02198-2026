@@ -44,6 +44,10 @@ export default defineRailway(() => {
     // diretamente (sem shell), então $PORT não seria expandido.
     start: 'sh -c "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"',
     env: {
+      // PORT é declarado explicitamente para que ui e worker consigam
+      // referenciá-lo: a porta injetada pelo Railway em runtime não é uma
+      // variável referenciável entre serviços.
+      PORT: "8000",
       DATABASE_URL: db.env.DATABASE_URL,
 
       // Vertex AI — gemini-3.6-flash e gemini-embedding-2 são servidos pelo
@@ -75,13 +79,16 @@ export default defineRailway(() => {
     },
   });
 
+  // A referência entre serviços usa a sintaxe de interpolação do Railway em
+  // string literal. Em template literal do TypeScript os objetos de referência
+  // seriam convertidos para "[object Object]" antes de chegarem ao Railway.
   const ui = service("ui", {
     source: github(REPO, { branch: BRANCH }),
     start:
       'sh -c "streamlit run src/ui/app.py --server.port ${PORT:-8501}' +
       ' --server.address 0.0.0.0 --server.headless true"',
     env: {
-      API_URL: `http://${api.env.RAILWAY_PRIVATE_DOMAIN}:${api.env.PORT}`,
+      API_URL: "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}",
     },
   });
 
@@ -90,7 +97,7 @@ export default defineRailway(() => {
     start: "python -m src.ingestion.mqtt_worker",
     env: {
       DATABASE_URL: db.env.DATABASE_URL,
-      API_URL: `http://${api.env.RAILWAY_PRIVATE_DOMAIN}:${api.env.PORT}`,
+      API_URL: "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}",
       MQTT_HOST: mosquitto.env.RAILWAY_PRIVATE_DOMAIN,
       MQTT_USERNAME: mosquitto.env.MQTT_USERNAME,
       MQTT_PASSWORD: mosquitto.env.MQTT_PASSWORD,
