@@ -1,0 +1,171 @@
+% ============================================================================
+%  capa.tex — capa, ficha tecnica e controle de versoes
+% ============================================================================
+
+\begin{titlepage}
+\thispagestyle{empty}
+\singlespacing
+\setlength{\parskip}{0pt}
+\begin{tikzpicture}[remember picture, overlay]
+  % Faixa superior
+  \fill[pmxBlueDark] (current page.north west) rectangle
+        ([yshift=-11mm]current page.north east);
+  \fill[pmxBlue] ([yshift=-11mm]current page.north west) rectangle
+        ([yshift=-13.4mm]current page.north east);
+  \fill[pmxOrange] ([yshift=-13.4mm]current page.north west) rectangle
+        ([yshift=-14.4mm]current page.north east);
+
+  % Marca d'agua geometrica — malha de conectividade sensor/servico
+  \begin{scope}[opacity=0.10]
+    \foreach \x/\y in {0/0, 2.4/1.1, 4.8/0.2, 7.2/1.5, 9.6/0.6,
+                       1.2/3.0, 3.6/3.9, 6.0/3.1, 8.4/4.2,
+                       0.6/6.2, 3.0/6.9, 5.4/6.1, 7.8/7.0} {
+      \fill[pmxBlue] ([xshift=\x cm + 20mm, yshift=\y cm + 24mm]current page.south west)
+            circle (1.5pt);
+    }
+    \draw[pmxBlue, line width=0.5pt]
+      ([xshift=20mm, yshift=24mm]current page.south west) --
+      ([xshift=44mm, yshift=35mm]current page.south west) --
+      ([xshift=68mm, yshift=26mm]current page.south west) --
+      ([xshift=92mm, yshift=39mm]current page.south west) --
+      ([xshift=116mm, yshift=30mm]current page.south west);
+    \draw[pmxBlue, line width=0.5pt]
+      ([xshift=32mm, yshift=54mm]current page.south west) --
+      ([xshift=56mm, yshift=63mm]current page.south west) --
+      ([xshift=80mm, yshift=55mm]current page.south west) --
+      ([xshift=104mm, yshift=66mm]current page.south west);
+  \end{scope}
+
+  % Barra lateral de identidade
+  \fill[pmxBlue] ([xshift=0mm, yshift=42mm]current page.south west) rectangle
+        ([xshift=3.2mm, yshift=150mm]current page.south west);
+\end{tikzpicture}
+
+\vspace*{6mm}
+
+\includegraphics[width=34mm]{figuras/logo-fiesc.png}
+
+\vspace{13mm}
+
+{\footnotesize\bfseries\color{pmxOrange}%
+ DOCUMENTAÇÃO TÉCNICA DE ARQUITETURA, ESCOPO E CÓDIGO}
+
+\vspace{3mm}
+
+{\color{pmxBlue}\rule{28mm}{2.6pt}}
+
+\vspace{8mm}
+
+{\fontsize{31}{37}\selectfont\bfseries\color{pmxBlueDark}%
+ Sistema de Manutenção\\Prescritiva para\\Máquinas Rotativas\par}
+
+\vspace{6mm}
+
+{\fontsize{13.5}{19}\selectfont\color{pmxInkSoft}%
+ Diagnóstico de defeitos por similaridade histórica com \emph{LightGBM} e \emph{KNN},
+ quantificação de ocorrências e geração de instruções de correção por
+ \emph{Retrieval-Augmented Generation} sobre a base documental da planta,
+ com \emph{guardrail} determinístico de cobertura.\par}
+
+\vspace{11mm}
+
+{\color{pmxGrid}\rule{\linewidth}{0.8pt}}
+
+\vspace{5mm}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}@{\hspace{4mm}}X@{}}
+  {\footnotesize\color{pmxMuted}DOCUMENTO}      & {\footnotesize\bfseries\color{pmxInk}\docid{} --- Documentação Técnica Consolidada}\\[3pt]
+  {\footnotesize\color{pmxMuted}VERSÃO}         & {\footnotesize\bfseries\color{pmxInk}\docversao{} (revisão final)}\\[3pt]
+  {\footnotesize\color{pmxMuted}DATA}           & {\footnotesize\bfseries\color{pmxInk}23 de agosto de 2026}\\[3pt]
+  {\footnotesize\color{pmxMuted}AUTOR}          & {\footnotesize\bfseries\color{pmxInk}Lucas Tadeu Monteiro Guedes Fernandes Salomão}\\[3pt]
+  {\footnotesize\color{pmxMuted}CONTEXTO}       & {\footnotesize\bfseries\color{pmxInk}Processo seletivo SENAI/SC 02198-2026 --- Desenvolvedor \textit{Full Stack} I.A. e Python}\\[3pt]
+  {\footnotesize\color{pmxMuted}CLASSIFICAÇÃO}  & {\footnotesize\bfseries\color{pmxInk}Documento técnico de projeto --- uso interno}\\
+\end{tabularx}
+
+\vspace{5mm}
+
+{\color{pmxGrid}\rule{\linewidth}{0.8pt}}
+
+\vspace{6mm}
+
+{\scriptsize\color{pmxMuted}%
+ Escopo do documento: requisitos, arquitetura nos quatro níveis do modelo C4,
+ modelo de dados, \textit{pipeline} de aprendizado de máquina, camada de
+ recuperação e geração, integração industrial por MQTT, infraestrutura em nuvem
+ e referência de código módulo a módulo. Diagramas vetoriais; fontes Mermaid
+ equivalentes no Apêndice~A.\par}
+
+\end{titlepage}
+
+% ---------------------------------------------------------------------------
+%  Ficha tecnica e controle de versoes
+% ---------------------------------------------------------------------------
+\chapter*{Ficha técnica do documento}
+\addcontentsline{toc}{chapter}{Ficha técnica do documento}
+
+\section*{Identificação}
+
+\begin{tabularx}{\linewidth}{@{}L{36mm}X@{}}
+  \toprule
+  \textbf{Campo} & \textbf{Conteúdo}\\
+  \midrule
+  Título & Sistema de Manutenção Prescritiva para Máquinas Rotativas ---
+           Documentação Técnica Consolidada\\
+  Identificador & \docid\\
+  Versão & \docversao\\
+  Data de emissão & 23 de agosto de 2026\\
+  Autor & Lucas Tadeu Monteiro Guedes Fernandes Salomão\\
+  Contato & \url{lucastadeusalomao@gmail.com}\\
+  Repositório & \texttt{Lucas-Salomao/FIESC-processo-seletivo-02198-2026}\\
+  Versão do \textit{software} & 0.1.0 (\texttt{pyproject.toml})\\
+  Linguagem principal & Python 3.12\\
+  Estado & Concluído e operacional (ambiente local e nuvem)\\
+  \bottomrule
+\end{tabularx}
+
+\section*{Escopo deste documento}
+
+O documento consolida, em fonte única, o que estava distribuído entre
+\arq{README.md}, \arq{ARCHITECTURE.md}, \arq{ANALYTICS.md}, \arq{DEPLOY.md} e as
+\textit{docstrings} do código-fonte, acrescentando o material que não existia em
+forma escrita: especificação de requisitos, catálogo de casos de uso, modelo C4
+completo nos quatro níveis, diagramas de atividade de todos os processos,
+dicionário de dados, especificação da API e referência de código módulo a
+módulo.
+
+\section*{Histórico de revisões}
+
+\begin{tabularx}{\linewidth}{@{}L{14mm}L{22mm}L{34mm}X@{}}
+  \toprule
+  \textbf{Versão} & \textbf{Data} & \textbf{Autor} & \textbf{Alterações}\\
+  \midrule
+  0.1 & 20/08/2026 & L. Salomão & Estrutura inicial; arquitetura e ADRs em
+       \arq{ARCHITECTURE.md}.\\
+  0.2 & 21/08/2026 & L. Salomão & Análise exploratória e fundamentação do
+       \textit{dashboard} (\arq{ANALYTICS.md}).\\
+  0.3 & 22/08/2026 & L. Salomão & Provisionamento em nuvem como código e guia de
+       implantação (\arq{DEPLOY.md}).\\
+  \textbf{1.0} & \textbf{23/08/2026} & \textbf{L. Salomão} &
+       \textbf{Documentação técnica consolidada: escopo, requisitos, casos de
+       uso, modelo C4, diagramas de atividade, dicionário de dados,
+       especificação de API, referência de código e bibliografia em ABNT.}\\
+  \bottomrule
+\end{tabularx}
+
+\section*{Documentos de referência do projeto}
+
+\begin{tabularx}{\linewidth}{@{}L{38mm}X@{}}
+  \toprule
+  \textbf{Artefato} & \textbf{Conteúdo}\\
+  \midrule
+  \arq{README.md} & Instruções de instalação, execução e demonstração.\\
+  \arq{ARCHITECTURE.md} & Visão arquitetural resumida e registro de decisões.\\
+  \arq{ANALYTICS.md} & Análise exploratória, consultas SQL e achados
+       estatísticos.\\
+  \arq{DEPLOY.md} & Provisionamento em nuvem, segredos e operação.\\
+  \arq{.railway/railway.ts} & Infraestrutura como código (SDK Railway).\\
+  \arq{docker-compose.yml} & Topologia do ambiente local.\\
+  \arq{artifacts/metrics.json} & Métricas do modelo nos três protocolos de
+       validação.\\
+  \bottomrule
+\end{tabularx}

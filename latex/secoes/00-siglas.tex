@@ -1,0 +1,86 @@
+% ===========================================================================
+%  Lista de siglas, abreviaturas e simbolos
+% ===========================================================================
+\chapter*{Lista de siglas e abreviaturas}
+\phantomsection
+\addcontentsline{toc}{chapter}{Lista de siglas e abreviaturas}
+\markboth{Lista de siglas e abreviaturas}{}
+
+\begin{tabularx}{\linewidth}{@{}L{24mm}X@{}}
+\toprule
+\textbf{Sigla} & \textbf{Significado}\\
+\midrule
+\endhead
+ADK      & \textit{Agent Development Kit} --- \textit{framework} de agentes do Google\\
+\zebra ADR      & \textit{Architecture Decision Record} --- registro de decisão arquitetural\\
+ANN      & \textit{Approximate Nearest Neighbors} --- vizinhos mais próximos aproximados\\
+\zebra ANOVA    & \textit{Analysis of Variance} --- análise de variância\\
+API      & \textit{Application Programming Interface}\\
+\zebra BPFI     & \textit{Ball Pass Frequency Inner} --- frequência de passagem na pista interna\\
+BPFO     & \textit{Ball Pass Frequency Outer} --- frequência de passagem na pista externa\\
+\zebra BSF      & \textit{Ball Spin Frequency} --- frequência de rotação do elemento rolante\\
+C4       & Modelo de visualização arquitetural em quatro níveis (Contexto, Contêiner, Componente, Código)\\
+\zebra CBM      & \textit{Condition-Based Maintenance} --- manutenção baseada em condição\\
+CI/CD    & \textit{Continuous Integration / Continuous Delivery}\\
+\zebra CLP      & Controlador Lógico Programável\\
+CMMS     & \textit{Computerized Maintenance Management System}\\
+\zebra CSV      & \textit{Comma-Separated Values}\\
+DLQ      & \textit{Dead-Letter Queue} --- fila de mensagens não processáveis\\
+\zebra DTO      & \textit{Data Transfer Object}\\
+ER       & Entidade-Relacionamento (modelo de dados)\\
+\zebra ETL      & \textit{Extract, Transform, Load}\\
+FFT      & \textit{Fast Fourier Transform} --- transformada rápida de Fourier\\
+\zebra GBDT     & \textit{Gradient Boosting Decision Trees}\\
+GCP      & \textit{Google Cloud Platform}\\
+\zebra HNSW     & \textit{Hierarchical Navigable Small World} --- índice de busca vetorial\\
+HTTP(S)  & \textit{HyperText Transfer Protocol} (\textit{Secure})\\
+\zebra IaC      & \textit{Infrastructure as Code} --- infraestrutura como código\\
+IIoT     & \textit{Industrial Internet of Things}\\
+\zebra ISO      & \textit{International Organization for Standardization}\\
+JSON     & \textit{JavaScript Object Notation}\\
+\zebra KNN      & \textit{k-Nearest Neighbors} --- \textit{k} vizinhos mais próximos\\
+LLM      & \textit{Large Language Model} --- modelo de linguagem de grande escala\\
+\zebra LGBM     & \textit{LightGBM} --- implementação de \textit{gradient boosting}\\
+MQTT     & \textit{Message Queuing Telemetry Transport}\\
+\zebra OCR      & \textit{Optical Character Recognition}\\
+OPC UA   & \textit{Open Platform Communications Unified Architecture}\\
+\zebra ORM      & \textit{Object-Relational Mapping}\\
+PDF      & \textit{Portable Document Format}\\
+\zebra QoS      & \textit{Quality of Service} --- nível de garantia de entrega MQTT\\
+RAG      & \textit{Retrieval-Augmented Generation} --- geração aumentada por recuperação\\
+\zebra REST     & \textit{Representational State Transfer}\\
+RF       & Requisito Funcional\\
+\zebra RNF      & Requisito Não Funcional\\
+RMS      & \textit{Root Mean Square} --- valor eficaz\\
+\zebra RPM      & Rotações Por Minuto\\
+SCADA    & \textit{Supervisory Control and Data Acquisition}\\
+\zebra SI       & Sistema Internacional de Unidades\\
+SQL      & \textit{Structured Query Language}\\
+\zebra TLS      & \textit{Transport Layer Security}\\
+UC       & Caso de Uso (\textit{Use Case})\\
+\zebra UI       & \textit{User Interface} --- interface do usuário\\
+UML      & \textit{Unified Modeling Language}\\
+\zebra YAML     & \textit{YAML Ain't Markup Language}\\
+\bottomrule
+\end{tabularx}
+
+\section*{Notação e símbolos}
+
+\begin{tabularx}{\linewidth}{@{}L{24mm}X@{}}
+\toprule
+\textbf{Símbolo} & \textbf{Significado}\\
+\midrule
+$v_{\text{RMS}}$   & Velocidade de vibração eficaz, em \si{\milli\meter\per\second}\\
+\zebra $a_{\text{pico}}$   & Aceleração de pico, em $g$ ($1\,g \approx \SI{9.81}{\meter\per\second\squared}$)\\
+$\omega$           & Velocidade angular do eixo, em \si{\radian\per\second}\\
+\zebra $f_{\text{rot}}$    & Frequência de rotação, em \si{\hertz} ($\text{RPM}/60$)\\
+$k$                & Número de vizinhos considerados pelo KNN ($k = 25$)\\
+\zebra $\kappa$            & Curtose do sinal (momento estatístico de 4.ª ordem)\\
+$C_f$              & Fator de crista ($a_{\text{pico}} / a_{\text{RMS}}$)\\
+\zebra $F$                 & Razão entre variância inter e intraclasse (estatística de discriminação)\\
+$z$                & Escore padronizado, $(x - \mu)/\sigma$\\
+\zebra $\Delta E$          & Diferença de cor perceptual (CIEDE2000)\\
+$p(c \mid x)$      & Probabilidade da classe $c$ dado o vetor de \textit{features} $x$\\
+\zebra $\text{F1}_{\text{macro}}$ & Média não ponderada do F1 por classe\\
+\bottomrule
+\end{tabularx}

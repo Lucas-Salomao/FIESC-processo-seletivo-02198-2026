@@ -1,0 +1,232 @@
+% ===========================================================================
+%  1 — Introducao
+% ===========================================================================
+\chapter{Introdução}
+\label{cap:introducao}
+
+\section{Contexto e motivação}
+
+Máquinas rotativas --- motores elétricos, bombas, ventiladores e redutores ---
+concentram a maior parte dos ativos críticos de uma planta industrial. A falha
+desses equipamentos raramente é instantânea: ela se anuncia por semanas em
+sinais de vibração, temperatura e corrente, e a leitura correta desses sinais é
+o que separa uma parada programada de \SI{2}{\hour} de uma parada não programada
+de \SI{2}{\day}.
+
+A literatura de manutenção organiza essa capacidade em uma escala de maturidade
+crescente, e a distinção entre os degraus é operacional, não apenas
+terminológica~\cite{abnt5462, jardine2006review, zonta2020predictive}:
+
+\begin{description}
+  \item[Corretiva] atua depois da falha. Custo máximo, previsibilidade nula.
+  \item[Preventiva] atua em intervalos fixos, independentemente da condição
+    real. Troca peças boas e ainda assim é surpreendida por falhas precoces.
+  \item[Preditiva] monitora a condição e estima \emph{quando} a falha
+    ocorrerá~\cite{iso17359, iso13381}. Responde \enquote{este rolamento vai
+    falhar}, mas deixa o \enquote{e agora?} para o julgamento do técnico.
+  \item[Prescritiva] acrescenta a resposta que falta: \emph{o que fazer},
+    \emph{em que ordem} e \emph{com base em qual procedimento
+    documentado}~\cite{ansari2019prima}.
+\end{description}
+
+O salto da manutenção preditiva para a prescritiva é o que este projeto
+implementa. Um diagnóstico que apenas classifica a falha transfere ao operador
+o trabalho de localizar, no acervo de manuais da empresa, qual procedimento se
+aplica --- e é exatamente aí que o conhecimento organizacional se perde. A
+solução documentada aqui fecha esse ciclo: identifica o tipo de defeito,
+quantifica quantas vezes ele já ocorreu no histórico, e devolve as instruções de
+correção extraídas dos documentos técnicos da própria planta, com citação de
+documento, seção e página.
+
+\subsection{O problema proposto}
+
+O enunciado do processo seletivo estabelece o seguinte problema: dado um novo
+evento de sensores de vibração em formato JSON, o sistema deve
+
+\begin{enumerate}
+  \item identificar o \textbf{tipo de defeito} presente no evento;
+  \item quantificar as \textbf{ocorrências históricas semelhantes} ---
+    quantidade, distribuição temporal e frequência;
+  \item gerar as \textbf{instruções de correção} consultando a base documental
+    da empresa;
+  \item restringir-se \textbf{apenas a falhas documentadas}: quando o defeito
+    identificado não possui documento orientativo, informar explicitamente essa
+    condição e sugerir o registro de um novo documento.
+\end{enumerate}
+
+O quarto requisito é o mais exigente do ponto de vista de engenharia. Ele
+determina que o sistema saiba, com certeza verificável, o que ele \emph{não}
+sabe. Modelos de linguagem são notoriamente ruins nisso: quando não encontram
+a informação, tendem a produzir uma resposta plausível em vez de
+admitir a lacuna~\cite{ji2023hallucination}. A resposta arquitetural adotada foi
+retirar essa decisão do modelo: a cobertura documental é verificada por um
+\textit{guardrail} determinístico antes de qualquer chamada ao modelo de
+linguagem, conforme detalhado no Capítulo~\ref{cap:rag}.
+
+\section{Objetivo do documento}
+
+Este documento é a especificação técnica completa da solução. Ele foi escrito
+para ser suficiente por si só: um engenheiro que nunca viu o repositório deve
+conseguir, apenas com este texto, compreender o problema, avaliar as decisões de
+projeto, reproduzir o ambiente, operar o sistema e modificar o código com
+segurança.
+
+Especificamente, o documento cumpre os seguintes objetivos:
+
+\begin{itemize}
+  \item \textbf{Delimitar o escopo} --- o que a solução faz, o que
+    deliberadamente não faz, sob quais premissas e restrições
+    (Capítulo~\ref{cap:escopo}).
+  \item \textbf{Descrever a arquitetura} segundo a norma
+    ISO/IEC/IEEE 42010~\cite{iso42010}, usando o modelo
+    C4~\cite{brown2026c4} nos quatro níveis e registrando as decisões em
+    formato ADR~\cite{nygard2011adr} (Capítulo~\ref{cap:arquitetura}).
+  \item \textbf{Especificar o comportamento} por meio de casos de uso UML
+    detalhados (Capítulo~\ref{cap:casosdeuso}) e de diagramas de atividade de
+    todos os processos do sistema (Capítulo~\ref{cap:atividades}).
+  \item \textbf{Fundamentar as escolhas de aprendizado de máquina} com
+    referência à literatura, incluindo a justificativa do algoritmo, o protocolo
+    de validação adotado e o diagnóstico honesto de suas limitações
+    (Capítulo~\ref{cap:ml}).
+  \item \textbf{Documentar o código} módulo a módulo, com propósito,
+    interface pública, invariantes e pontos de extensão
+    (Capítulo~\ref{cap:codigo}).
+\end{itemize}
+
+\begin{nota}
+Este documento descreve o sistema \emph{como ele foi construído}, não como se
+gostaria que ele fosse. Onde os resultados são desfavoráveis --- notadamente na
+generalização do classificador, Seção~\ref{sec:vazamento} --- eles são
+reportados com o número real, a causa diagnosticada e o encaminhamento
+proposto. Um documento técnico que esconde o resultado ruim perde a função de
+apoiar decisão.
+\end{nota}
+
+\section{Público-alvo e formas de leitura}
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{Perfil} & \thd{Interesse principal} & \thd{Roteiro sugerido}\\
+\midrule
+Avaliador técnico & Aderência ao enunciado e qualidade de engenharia &
+  Capítulos~\ref{cap:escopo}, \ref{cap:arquitetura}, \ref{cap:ml}
+  e~\ref{cap:rag}\\
+\zebra Arquiteto de \textit{software} & Estrutura, fronteiras e
+  \textit{trade-offs} &
+  Capítulos~\ref{cap:arquitetura}, \ref{cap:modelodados}
+  e~\ref{cap:infraestrutura}\\
+Cientista de dados & Dados, \textit{features}, modelo e validação &
+  Capítulos~\ref{cap:pipeline}, \ref{cap:ml} e Apêndice~\ref{ap:features}\\
+\zebra Desenvolvedor & Como o código está organizado e como estendê-lo &
+  Capítulos~\ref{cap:api}, \ref{cap:codigo} e Apêndice~\ref{ap:config}\\
+Engenheiro de manutenção & O que o sistema responde e com que confiança &
+  Capítulos~\ref{cap:casosdeuso}, \ref{cap:interface} e
+  Seção~\ref{sec:confianca}\\
+\zebra Equipe de operação & Implantar, monitorar e diagnosticar falhas &
+  Capítulos~\ref{cap:infraestrutura}, \ref{cap:qualidade} e
+  Apêndice~\ref{ap:operacao}\\
+\bottomrule
+\end{tabularx}
+
+\section{Convenções adotadas}
+
+\subsection{Tipografia e identificadores}
+
+\begin{itemize}
+  \item \arq{caminho/arquivo.py} indica arquivo ou diretório do repositório.
+  \item \cd{identificador} indica nome de função, classe, variável, tabela,
+    coluna, tópico MQTT ou variável de ambiente.
+  \item Termos técnicos sem tradução consolidada aparecem em \textit{itálico}
+    na primeira ocorrência.
+  \item Identificadores rastreáveis seguem prefixos fixos:
+    \req{RF-nn} (requisito funcional), \req{RNF-nn} (requisito não funcional),
+    \ucr{UC-nn} (caso de uso), \adrr{ADR-nn} (decisão arquitetural),
+    \req{AT-nn} (diagrama de atividade) e \req{RI-nn} (risco).
+\end{itemize}
+
+\subsection{Diagramas}
+
+Todos os diagramas são vetoriais, desenhados nativamente em \TeX{} com a
+biblioteca TikZ, o que garante tipografia uniforme e nitidez em qualquer nível
+de ampliação. O código-fonte \textbf{Mermaid} equivalente de cada diagrama ---
+utilizável diretamente em \arq{README.md}, GitHub, GitLab ou ferramentas de
+documentação --- está reunido no Apêndice~\ref{ap:mermaid}, indexado pelo mesmo
+número de figura.
+
+As notações empregadas são:
+
+\begin{tabularx}{\linewidth}{@{}L{42mm}X@{}}
+\toprule
+\headrow \thd{Notação} & \thd{Onde é usada}\\
+\midrule
+Modelo C4~\cite{brown2026c4} & Contexto, contêineres, componentes e código
+  (Capítulo~\ref{cap:arquitetura})\\
+\zebra UML --- casos de uso~\cite{omg2017uml} & Capítulo~\ref{cap:casosdeuso}\\
+UML --- atividades~\cite{omg2017uml} & Capítulo~\ref{cap:atividades} e
+  processos ao longo do texto\\
+\zebra UML --- sequência~\cite{omg2017uml} & Fluxos de interação
+  (Capítulos~\ref{cap:arquitetura}, \ref{cap:rag} e~\ref{cap:mqtt})\\
+UML --- classes~\cite{omg2017uml} & Nível 4 do C4
+  (Seção~\ref{sec:c4nivel4})\\
+\zebra Entidade-Relacionamento & Modelo de dados
+  (Capítulo~\ref{cap:modelodados})\\
+Diagrama de implantação & Infraestrutura local e em nuvem
+  (Capítulo~\ref{cap:infraestrutura})\\
+\bottomrule
+\end{tabularx}
+
+\subsection{Números e unidades}
+
+Todas as grandezas físicas são expressas em unidades do SI, com vírgula como
+separador decimal e ponto como separador de milhar, conforme a prática
+brasileira. As colunas redundantes do conjunto de dados original em
+\si{\inch\per\second} e \si{\degF} foram descartadas do vetor de
+\textit{features} por colinearidade exata com suas contrapartes métricas
+(Seção~\ref{sec:features}).
+
+Métricas do modelo são reproduzidas exatamente como registradas em
+\arq{artifacts/metrics.json}, gerado pela execução de treino de
+22 de agosto de 2026 sobre \num{166796} eventos.
+
+\section{Estrutura do documento}
+
+\begin{tabularx}{\linewidth}{@{}L{13mm}L{46mm}X@{}}
+\toprule
+\headrow \thd{Cap.} & \thd{Título} & \thd{Conteúdo}\\
+\midrule
+\ref{cap:introducao} & Introdução & Contexto, objetivo, público e convenções.\\
+\zebra \ref{cap:definicoes} & Definições & Glossário de domínio e de
+  tecnologia.\\
+\ref{cap:escopo} & Escopo & Problema, fronteiras, premissas, requisitos e
+  rastreabilidade.\\
+\zebra \ref{cap:casosdeuso} & Casos de uso & Atores, diagrama UML e
+  especificação de doze casos de uso.\\
+\ref{cap:arquitetura} & Arquitetura & Modelo C4 completo, ADRs e atributos de
+  qualidade.\\
+\zebra \ref{cap:modelodados} & Modelo de dados & Diagrama ER, dicionário de
+  dados e esquemas.\\
+\ref{cap:pipeline} & Pipeline de dados & ETL, canonicalização de rótulos e
+  auditoria.\\
+\zebra \ref{cap:ml} & Aprendizado de máquina & \textit{Features}, escolha do
+  algoritmo, treino, validação e limitações.\\
+\ref{cap:rag} & RAG e linguagem & Ingestão documental, \textit{guardrail},
+  \textit{prompting} e agente.\\
+\zebra \ref{cap:mqtt} & Integração industrial & Tópicos MQTT, garantias de
+  entrega, DLQ e alertas.\\
+\ref{cap:interface} & Interface & Navegação, painéis analíticos e decisões de
+  visualização.\\
+\zebra \ref{cap:api} & API & Especificação de todos os \textit{endpoints}
+  REST.\\
+\ref{cap:atividades} & Atividades & Diagramas de atividade de todos os
+  processos.\\
+\zebra \ref{cap:infraestrutura} & Infraestrutura & Ambiente local, nuvem, IaC,
+  segredos e custos.\\
+\ref{cap:qualidade} & Qualidade & Estratégia de testes, suíte, CI/CD e padrões
+  de código.\\
+\zebra \ref{cap:codigo} & Documentação de código & Referência de todos os
+  módulos.\\
+\ref{cap:riscos} & Riscos e evolução & Matriz de riscos e \textit{roadmap}
+  técnico.\\
+\zebra \ref{cap:conclusao} & Conclusão & Síntese e aderência ao enunciado.\\
+\bottomrule
+\end{tabularx}

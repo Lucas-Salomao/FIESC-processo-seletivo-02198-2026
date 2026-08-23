@@ -1,0 +1,317 @@
+% ===========================================================================
+%  12 — Especificacao da API
+% ===========================================================================
+\chapter{Especificação da API}
+\label{cap:api}
+
+A API é a única porta de entrada de domínio (\adrr{ADR-06}). Todos os
+\textit{endpoints} estão sob o prefixo \cd{/api/v1}, e a especificação
+OpenAPI é gerada automaticamente a partir dos esquemas de domínio,
+disponível em \cd{/docs}.
+
+\section{Catálogo de \textit{endpoints}}
+
+\begin{table}[H]
+\caption{Catálogo de \textit{endpoints} da API}
+\label{tab:endpoints}
+\begin{tabularx}{\linewidth}{@{}L{12mm}L{36mm}XL{16mm}@{}}
+\toprule
+\headrow \thd{Método} & \thd{Caminho} & \thd{Função} & \thd{Requisito}\\
+\midrule
+\cd{GET} & \cd{/health} & Estado do serviço, artefatos e cobertura &
+  \req{RF-15}\\
+\zebra \cd{POST} & \cd{/diagnose} & Diagnóstico completo de um evento &
+  \req{RF-01}, \req{RF-02}, \req{RF-03}, \req{RF-04}\\
+\cd{POST} & \cd{/chat} & Conversa prescritiva com agente e ferramentas &
+  \req{RF-07}\\
+\zebra \cd{GET} & \cd{/stats} & Contagem por família e série mensal de falhas &
+  \req{RF-14}\\
+\cd{GET} & \cd{/events} & Eventos mais recentes, com filtro por família &
+  \req{RF-13}\\
+\zebra \cd{GET} & \cd{/documents} & Documentos ativos e cobertura documental &
+  \req{RF-06}\\
+\cd{POST} & \cd{/documents} & Cadastro e indexação de novo procedimento &
+  \req{RF-05}\\
+\zebra \cd{GET} & \cd{/analytics/severity} & Severidade por família e regime de
+  rotação & \req{RF-12}\\
+\cd{GET} & \cd{/analytics/signatures} & Assinaturas e poder discriminativo &
+  \req{RF-12}\\
+\zebra \cd{GET} & \cd{/analytics/model-quality} & Métricas, importância e
+  evidência de vazamento & \req{RF-12}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ---------------------------------------------------------------------------
+\section{\cd{POST /api/v1/diagnose}}
+
+É o \textit{endpoint} central do sistema: recebe o evento e devolve as três
+respostas exigidas pelo enunciado.
+
+\subsection{Requisição}
+
+Corpo em JSON, validado pelo esquema \cd{SensorEvent}. As 18 grandezas de sensor
+são \textbf{obrigatórias}; \cd{id}, \cd{created\_at} e \cd{fault} são
+opcionais. Campos extras são tolerados e ignorados --- o que permite enviar o
+registro do conjunto de dados original sem remover as colunas redundantes.
+
+\begin{lstlisting}[language=jsonpmx, caption={Requisição --- evento de exemplo do enunciado}, label={lst:reqdiag}]
+{
+  "id": 114387,
+  "created_at": "2026-06-01 21:32:53.911176+00:00",
+  "z_rms_velocity_mm_s": 1.517,
+  "x_rms_velocity_mm_s": 2.0,
+  "temperature_c": 24.69,
+  "z_peak_acceleration_g": 0.484,
+  "x_peak_acceleration_g": 0.631,
+  "z_peak_vel_comp_freq_hz": 61.0,
+  "x_peak_vel_comp_freq_hz": 61.0,
+  "z_rms_acceleration_g": 0.09,
+  "x_rms_acceleration_g": 0.114,
+  "z_kurtosis": 2.392,
+  "x_kurtosis": 2.77,
+  "z_crest_factor": 3.747,
+  "x_crest_factor": 4.269,
+  "z_peak_velocity_mm_s": 2.146,
+  "x_peak_velocity_mm_s": 2.829,
+  "z_high_freq_rms_accel_g": 0.129,
+  "x_high_freq_rms_accel_g": 0.147,
+  "fault": "cocked_rotor_2",
+  "rpm": 1000.0
+}
+\end{lstlisting}
+
+\subsection{Resposta}
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}L{22mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Tipo} & \thd{Significado}\\
+\midrule
+\cd{predicted\_fault} & \cd{string} & Nome canônico da família prevista.\\
+\zebra \cd{is\_fault} & \cd{boolean} & Falso para estados operacionais --- e
+  então não há prescrição.\\
+\cd{probability} & \cd{float} & Probabilidade da classe predita.\\
+\zebra \cd{knn\_agreement} & \cd{float} & Fração dos 25 vizinhos na família
+  prevista.\\
+\cd{confidence} & \cd{string} & \cd{alta}, \cd{media} ou \cd{baixa}.\\
+\zebra \cd{similar\_events.count} & \cd{int} & Total de ocorrências históricas
+  da família.\\
+\cd{similar\_events.first\_seen} \newline \cd{...last\_seen} & \cd{datetime} &
+  Período de observação da família no histórico.\\
+\zebra \cd{similar\_events.freq\_per\_day} & \cd{float} & Frequência média
+  diária no período.\\
+\cd{similar\_events.timeline} & \cd{list} & Série mensal
+  \cd{[\{month, count\}]}.\\
+\zebra \cd{similar\_events.neighbor\_ids} & \cd{list[int]} & Identificadores dos
+  25 eventos mais semelhantes --- \textbf{rastreáveis no banco}.\\
+\cd{documented} & \cd{boolean} & Resultado do \textit{guardrail} de
+  cobertura.\\
+\zebra \cd{prescription} & \cd{object | null} & \cd{instructions\_md} e
+  \cd{citations[\{doc, section, page\}]}. Nulo quando não documentada.\\
+\cd{suggestion} & \cd{string | null} & Aviso e orientação de registro. Nulo
+  quando documentada.\\
+\bottomrule
+\end{tabularx}
+
+\begin{lstlisting}[language=jsonpmx, caption={Resposta --- falha documentada (campos de texto abreviados)}, label={lst:respdiag}]
+{
+  "predicted_fault": "cocked_rotor",
+  "is_fault": true,
+  "probability": 0.9203,
+  "knn_agreement": 0.96,
+  "confidence": "alta",
+  "similar_events": {
+    "count": 14275,
+    "first_seen": "2026-05-04T11:20:31.402000+00:00",
+    "last_seen":  "2026-06-14T08:55:02.117000+00:00",
+    "freq_per_day": 344.58,
+    "timeline": [{"month": "2026-05", "count": 9312},
+                 {"month": "2026-06", "count": 4963}],
+    "neighbor_ids": [114387, 114388, 114362, "..."],
+    "neighbor_agreement": 0.96
+  },
+  "documented": true,
+  "prescription": {
+    "instructions_md": "### 1. Seguranca\n1. Bloqueio e etiquetagem [1] ...",
+    "citations": [
+      {"doc": "Doc6.pdf", "section": "3.1 Verificacao previa", "page": 4},
+      {"doc": "Doc6.pdf", "section": "4.2 Reassentamento",      "page": 6}
+    ]
+  },
+  "suggestion": null
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=jsonpmx, caption={Resposta --- falha \textbf{não} documentada (o modelo de linguagem não é chamado)}, label={lst:respundoc}]
+{
+  "predicted_fault": "ventoinha",
+  "is_fault": true,
+  "probability": 0.7412,
+  "knn_agreement": 0.72,
+  "confidence": "media",
+  "similar_events": { "count": 12299, "freq_per_day": 289.4, "...": "..." },
+  "documented": false,
+  "prescription": null,
+  "suggestion": "Ainda nao existe documento orientativo cadastrado para a falha
+    **Falha na ventoinha**. Sugestao: registre um novo documento tecnico para
+    este defeito na aba 'Documentos' (procedimento de diagnostico, correcao e
+    validacao). Assim que o documento for cadastrado, o sistema passara a gerar
+    as instrucoes de correcao automaticamente."
+}
+\end{lstlisting}
+
+\subsection{Códigos de estado}
+
+\begin{tabularx}{\linewidth}{@{}L{16mm}X@{}}
+\toprule
+\headrow \thd{Código} & \thd{Condição}\\
+\midrule
+\cd{200} & Diagnóstico produzido --- inclusive no caso de falha não
+  documentada, que é resposta válida e não erro.\\
+\zebra \cd{422} & \textit{Payload} não satisfaz o esquema. O corpo lista campo
+  a campo o que está inconsistente.\\
+\cd{500} & Artefatos de aprendizado de máquina ausentes ou corrompidos.
+  Diagnóstico prévio disponível em \cd{/health}.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\section{\cd{POST /api/v1/chat}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}L{20mm}X@{}}
+\toprule
+\headrow \thd{Campo (requisição)} & \thd{Tipo} & \thd{Uso}\\
+\midrule
+\cd{message} & \cd{string} & Pergunta do usuário. Pode conter o JSON de um
+  evento colado.\\
+\zebra \cd{session\_id} & \cd{string | null} & Identificador da conversa. A
+  memória é persistida por sessão; ausente, uma nova é criada.\\
+\cd{fault\_family} & \cd{string | null} & Contexto do diagnóstico corrente.
+  Usado somente pelo caminho de degradação.\\
+\zebra \cd{history} & \cd{list} & Histórico da conversa. Usado somente pelo
+  caminho de degradação --- com agente, a memória vem do banco.\\
+\midrule
+\multicolumn{3}{@{}l}{\textbf{Resposta}}\\
+\cd{answer\_md} & \cd{string} & Resposta em Markdown.\\
+\zebra \cd{citations} & \cd{list} & Fontes efetivamente recuperadas
+  (\cd{doc}, \cd{section}, \cd{page}).\\
+\cd{documented} & \cd{boolean} & Falso quando o \textit{guardrail} bloqueou a
+  consulta documental.\\
+\zebra \cd{agent\_used} & \cd{boolean} & Verdadeiro se respondido pelo agente;
+  falso se pelo caminho de degradação. A interface exibe o modo.\\
+\bottomrule
+\end{tabularx}
+
+Em caso de indisponibilidade do serviço de linguagem, o \textit{endpoint}
+devolve \cd{503} com mensagem \textbf{acionável}: quais variáveis configurar e
+qual comando de autenticação executar, além do tipo da exceção original.
+
+% ---------------------------------------------------------------------------
+\section{\cd{POST /api/v1/documents}}
+
+Requisição \cd{multipart/form-data} com três partes:
+
+\begin{tabularx}{\linewidth}{@{}L{18mm}L{22mm}X@{}}
+\toprule
+\headrow \thd{Parte} & \thd{Tipo} & \thd{Conteúdo}\\
+\midrule
+\cd{file} & arquivo & PDF do procedimento.\\
+\zebra \cd{title} & texto & Título técnico exibido nas citações.\\
+\cd{families} & texto & Famílias cobertas, separadas por vírgula. Validadas
+  contra a taxonomia canônica.\\
+\bottomrule
+\end{tabularx}
+
+\begin{lstlisting}[language=bash, caption={Cadastro de documento via linha de comando}, label={lst:upload}]
+curl -X POST http://localhost:8000/api/v1/documents \
+  -F 'file=@procedimento-ventoinha.pdf' \
+  -F 'title=Procedimento para Correcao de Falhas em Ventoinhas' \
+  -F 'families=ventoinha'
+# -> {"filename":"procedimento-ventoinha.pdf","chunks":37,"families":["ventoinha"]}
+\end{lstlisting}
+
+\begin{tabularx}{\linewidth}{@{}L{16mm}X@{}}
+\toprule
+\headrow \thd{Código} & \thd{Condição}\\
+\midrule
+\cd{200} & Documento indexado. A resposta traz a contagem de \textit{chunks} e
+  as famílias atendidas. \textbf{A cobertura muda a partir da próxima
+  requisição.}\\
+\zebra \cd{422} & Família inexistente (a resposta lista as válidas), lista de
+  famílias vazia, ou nenhum conteúdo extraível do PDF.\\
+\bottomrule
+\end{tabularx}
+
+\begin{nota}
+A indexação é idempotente por nome de arquivo: reenviar o mesmo arquivo remove
+os \textit{chunks} anteriores antes de reindexar. Isso permite corrigir e
+recadastrar um procedimento sem duplicar conteúdo na base vetorial --- e sem
+deixar trechos órfãos da versão antiga concorrendo na busca.
+\end{nota}
+
+% ---------------------------------------------------------------------------
+\section{\cd{GET /api/v1/health}}
+
+\begin{lstlisting}[language=jsonpmx, caption={Resposta de saúde}, label={lst:health}]
+{
+  "status": "ok",
+  "artifacts_loaded": true,
+  "documented_families": ["cocked_rotor", "correia", "desalinhamento",
+                          "desbalanceamento", "polia", "rolamento_ball",
+                          "rolamento_combination", "rolamento_inner",
+                          "rolamento_outer"],
+  "chat_model": "gemini-3.6-flash",
+  "embedding_model": "gemini-embedding-2"
+}
+\end{lstlisting}
+
+O campo \cd{documented\_families} vem vazio enquanto a indexação inicial estiver
+em curso em uma implantação nova --- o que é estado \emph{parcial}, não falha, e
+por isso o \textit{endpoint} continua devolvendo \cd{200}. Se devolvesse erro, o
+orquestrador reprovaria e reiniciaria a instância indefinidamente, impedindo a
+indexação de terminar.
+
+% ---------------------------------------------------------------------------
+\section{\textit{Endpoints} de consulta e analítica}
+
+\begin{tabularx}{\linewidth}{@{}L{40mm}X@{}}
+\toprule
+\headrow \thd{\textit{Endpoint}} & \thd{Parâmetros e retorno}\\
+\midrule
+\cd{GET /events} &
+  \cd{limit} (padrão 50, teto 500) e \cd{family} (nome canônico). Retorna os
+  eventos mais recentes com identificador, instante, rótulo bruto, rotação,
+  velocidades eficazes e temperatura.\\
+\zebra \cd{GET /stats} &
+  Sem parâmetros. Retorna \cd{per\_family} (contagem por família, com indicação
+  de falha), \cd{monthly\_faults} (série mensal apenas de falhas) e
+  \cd{documented\_families}.\\
+\cd{GET /documents} &
+  Sem parâmetros. Retorna documentos ativos com identificador, arquivo, título e
+  data de ingestão, mais a cobertura corrente.\\
+\zebra \cd{GET /analytics/severity} &
+  Retorna \cd{records} --- uma linha por família e regime de rotação, com
+  percentis 50, 95 e 99 da velocidade eficaz em X, percentis em Z, temperatura
+  mediana, contagem, linha de base e severidade relativa --- e
+  \cd{baseline\_by\_rpm}.\\
+\cd{GET /analytics/signatures} &
+  Retorna \cd{signatures} (escore padronizado de cada família em cada
+  \textit{feature}), \cd{discriminative\_power} (razão $F$ por
+  \textit{feature}, ordenada) e a lista de \textit{features}.\\
+\zebra \cd{GET /analytics/model-quality} &
+  Retorna \cd{metrics} (conteúdo integral de \arq{metrics.json}),
+  \cd{feature\_importance} (percentual por \textit{feature}, ordenado) e
+  \cd{leakage} (razão entre dispersão inter e intracampanha por
+  \textit{feature}, com o número de campanhas consideradas).\\
+\bottomrule
+\end{tabularx}
+
+\begin{atencao}
+Os \textit{endpoints} de analítica dependem de recursos estatísticos do
+PostgreSQL --- \cd{percentile\_cont}, \cd{stddev\_samp} e \cd{var\_samp} --- que
+não existem em SQLite. Por isso os testes dessas funções exigem um esquema
+temporário no PostgreSQL e são \emph{pulados} quando o banco não está
+disponível, em vez de falharem. Interpolação de nome de coluna nas consultas é
+restrita a uma lista branca derivada da constante de \textit{features} do
+código; coluna fora da lista levanta exceção antes de a consulta ser montada.
+\end{atencao}

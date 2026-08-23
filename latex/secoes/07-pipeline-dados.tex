@@ -1,0 +1,223 @@
+% ===========================================================================
+%  7 — Pipeline de dados
+% ===========================================================================
+\chapter{Pipeline de dados e canonicalização}
+\label{cap:pipeline}
+
+\section{Caracterização da fonte de dados}
+
+O conjunto de dados original é um arquivo de \SI{31}{\mega\byte} com telemetria
+de uma bancada instrumentada de máquina rotativa.
+
+\begin{table}[H]
+\caption{Caracterização do conjunto de dados \arq{banner.csv}}
+\label{tab:dataset}
+\begin{tabularx}{\linewidth}{@{}L{46mm}X@{}}
+\toprule
+\headrow \thd{Propriedade} & \thd{Valor}\\
+\midrule
+Registros & \num{166796}\\
+\zebra Período & 30/04/2026 a 16/06/2026 (aproximadamente 47 dias)\\
+Colunas de sensor utilizadas & 18 (em unidades SI)\\
+\zebra Colunas descartadas & Duplicatas em \si{\inch\per\second} e
+  \si{\degF} --- colineares por construção com as contrapartes métricas\\
+Rótulos brutos distintos & \num{151}\\
+\zebra Famílias canônicas & 17 (12 falhas + 5 estados operacionais)\\
+Campanhas com $\geq 30$ eventos & 146\\
+\zebra Regimes de rotação &
+  \SI{500}{rpm} (\num{55857}) $\cdot$
+  \SI{2000}{rpm} (\num{55160}) $\cdot$
+  \SI{1000}{rpm} (\num{53414}) $\cdot$
+  \SI{3000}{rpm} (\num{1707}) $\cdot$
+  \SI{0}{rpm} (658)\\
+Equipamentos & 1 (bancada única)\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{limitacao}
+Os regimes de rotação são fortemente desbalanceados: três regimes concentram
+\SI{98.6}{\percent} dos registros, e o regime de \SI{3000}{rpm} --- justamente
+onde o desbalanceamento se manifesta de forma inequívoca
+(Seção~\ref{sec:fisica}) --- tem apenas \num{1707} amostras. Toda conclusão
+sobre alta rotação repousa sobre \SI{1}{\percent} dos dados.
+\end{limitacao}
+
+\section{Canonicalização de rótulos}
+
+\subsection{O problema}
+
+A coluna de anotação do conjunto de dados contém \num{151} valores distintos
+para 17 condições reais. A dispersão tem três causas, todas presentes em dados
+industriais reais:
+
+\begin{enumerate}
+  \item \textbf{Variação de campanha}: sufixos e prefixos que identificam a
+    sessão de coleta, não a falha --- \cd{\_2}, \cd{\_3}, \cd{\_pos\_2},
+    \cd{\_carga}, \cd{\_adxl\_0}, \cd{new\_}.
+  \item \textbf{Erros de digitação}: \cd{ddesbalanceado},
+    \cd{cockecocked\_adxl\_0}, \cd{mortor\_desligado}, \cd{normla\_carga\_3\_3},
+    \cd{desbanlanceado}, \cd{desabalanceado}, \cd{desabanceado}.
+  \item \textbf{Mistura de falhas com estados}: \cd{baseline}, \cd{teste},
+    \cd{acelerando} e \cd{motor\_desligado} não são defeitos, e tratá-los como
+    tal produziria prescrições para condições normais.
+\end{enumerate}
+
+\subsection{A solução: regras ordenadas e auditáveis}
+
+A canonicalização é feita por uma lista \emph{ordenada} de expressões
+regulares declaradas em YAML. A primeira regra que casa vence. Regras de falha
+precedem regras de estado, para que \cd{rolamento\_outer\_novo\_teste} caia em
+\cd{rolamento\_outer} e não em \cd{teste}.
+
+\begin{lstlisting}[language=yamlpmx, caption={Extrato de \arq{src/etl/label\_map.yaml} --- declaração de famílias e regras ordenadas}, label={lst:labelmap}]
+families:
+  rolamento_inner:  { is_fault: true,  display: "Defeito na pista interna do rolamento (BPFI)" }
+  desbalanceamento: { is_fault: true,  display: "Desbalanceamento do rotor" }
+  cocked_rotor:     { is_fault: true,  display: "Rotor inclinado (cocked rotor)" }
+  normal:           { is_fault: false, display: "Operacao normal" }
+  motor_desligado:  { is_fault: false, display: "Motor desligado" }
+
+# A ordem importa: a primeira regra que casar vence.
+rules:
+  - { pattern: "inner",                  family: rolamento_inner }
+  - { pattern: "outer",                  family: rolamento_outer }
+  - { pattern: "ball",                   family: rolamento_ball }
+  - { pattern: "comb",                   family: rolamento_combination }
+  # cobre desb-, e os erros reais ddesb-, desbanlanceado, desabalanceado
+  - { pattern: "desb|abal|abanc|balanc", family: desbalanceamento }
+  - { pattern: "desalinh",               family: desalinhamento }
+  - { pattern: "cock",                   family: cocked_rotor }   # cobre "cockecocked"
+  # --- estados operacionais, avaliados por ultimo ---
+  - { pattern: "desligado",              family: motor_desligado } # cobre "mortor_"
+  - { pattern: "norm",                   family: normal }          # cobre "normla"
+  - { pattern: "^(new_)?tes",            family: teste }
+\end{lstlisting}
+
+\begin{decisao}
+A alternativa óbvia --- agrupamento automático por similaridade de texto ---
+foi rejeitada por duas razões. Primeiro, não é auditável: ninguém consegue
+justificar, meses depois, por que dois rótulos caíram no mesmo grupo.
+Segundo, erro de grafia não é problema de similaridade semântica:
+\cd{cockecocked} e \cd{cocked} são vizinhos por acidente de digitação, e
+\cd{rolamento\_inner} e \cd{rolamento\_outer} são textualmente próximos mas
+descrevem defeitos distintos, com procedimentos distintos. Regras explícitas
+erram menos e explicam-se sozinhas (\adrr{ADR-05}).
+\end{decisao}
+
+\subsection{Auditoria: falhar cedo em vez de classificar em silêncio}
+
+O canonizador levanta exceção diante de rótulo sem regra. O ETL, por sua vez,
+canonicaliza \textbf{todos} os rótulos distintos \emph{antes} de gravar
+qualquer linha:
+
+\begin{lstlisting}[language=Python, caption={Auditoria integral antes da gravação --- \arq{scripts/ingest\_data.py}}, label={lst:auditoria}]
+# Canonicalizacao: audita 100% dos rotulos antes de gravar qualquer coisa
+raw_labels = df["fault"].astype(str).str.strip().str.lower()
+unique_labels = sorted(raw_labels.unique())
+mapping = {lbl: canonizer.canonize(lbl) for lbl in unique_labels}  # levanta se desconhecido
+print(f"{len(unique_labels)} rotulos brutos mapeados para "
+      f"{len({f.name for f in mapping.values()})} familias canonicas.")
+\end{lstlisting}
+
+A consequência prática: um rótulo novo em uma carga futura interrompe o
+processo com o nome exato do rótulo, exigindo curadoria humana. É o oposto do
+comportamento usual --- descartar a linha ou atribuí-la a uma categoria
+\enquote{outros} --- que produz uma base silenciosamente incorreta
+(\req{RNF-14}).
+
+\section{Fluxo do ETL}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \node[etapaio, text width=27mm] (csv) at (1.9,0)
+    {\arq{banner.csv}\\\SI{31}{\mega\byte}\\\num{166796} linhas};
+  \node[etapa, text width=28mm] (rd) at (6.0,0)
+    {\textbf{Leitura e tipagem}\\{\scriptsize \cd{parse\_dates}, coerção
+     numérica}};
+  \node[etapa, text width=28mm] (cn) at (10.2,0)
+    {\textbf{Canonicalização integral}\\{\scriptsize \num{151} rótulos
+     $\rightarrow$ 17 famílias}};
+  \node[etapa, text width=28mm] (dd) at (14.4,0)
+    {\textbf{Deduplicação}\\{\scriptsize por \cd{id}; descarte de linhas
+     incompletas}};
+
+  \node[etapa, text width=28mm] (tx) at (14.4,-3.6)
+    {\textbf{Taxonomia}\\{\scriptsize popula \cd{fault\_families} e
+     \cd{label\_map}}};
+  \node[etapa, text width=28mm] (ld) at (10.2,-3.6)
+    {\textbf{Carga dos eventos}\\{\scriptsize inserção idempotente em
+     \cd{events}}};
+  \node[etapaout, text width=27mm] (pg) at (6.0,-3.6)
+    {\textbf{PostgreSQL}\\{\scriptsize histórico consultável}};
+  \node[etapaerr, text width=27mm, fill=pmxOrangeWash, draw=pmxOrange]
+       (err) at (1.9,-3.6)
+    {\textbf{Interrupção}\\{\scriptsize rótulo sem regra $\rightarrow$
+     exceção nomeando o rótulo}};
+
+  \draw[pipe] (csv) -- (rd);
+  \draw[pipe] (rd) -- (cn);
+  \draw[pipe] (cn) -- (dd);
+  \draw[pipe] (dd) -- (tx);
+  \draw[pipe] (tx) -- (ld);
+  \draw[pipe] (ld) -- (pg);
+  \draw[pipe, draw=pmxOrange] (cn.south) -- (10.2,-2.2) -- (1.9,-2.2) -- (err.north)
+    node[pipelbl, pos=0.55, above=1pt]{rótulo desconhecido};
+
+\end{tikzpicture}}
+\caption[Pipeline do ETL]{Pipeline do ETL do histórico. A canonicalização
+  integral acontece \emph{antes} de qualquer escrita: se algum rótulo não casar
+  com regra, o processo termina sem tocar o banco. O caminho em laranja é a
+  porta de qualidade de dados.}
+\label{fig:etl}
+\end{figure}
+
+\section{\textit{Features} geradas na carga}
+
+O ETL grava as 18 grandezas brutas; as 5 \textit{features} derivadas são
+calculadas em tempo de treino e de inferência pelo \emph{mesmo} módulo
+(\arq{src/ml/features.py}), nunca materializadas no banco.
+
+\begin{decisao}
+Não materializar as derivadas evita a classe de defeito mais insidiosa em
+sistemas de aprendizado de máquina: a divergência entre a transformação aplicada
+no treino e a aplicada na inferência --- o \textit{training-serving skew}
+descrito por Sculley \textit{et al.}~\cite{sculley2015debt}. Com uma única
+função compartilhada, a divergência é impossível por construção. O custo é
+recalcular cinco divisões por evento, o que é irrelevante.
+\end{decisao}
+
+\section{Agregações analíticas}
+
+As análises do painel são consultas SQL executadas sob demanda, não artefatos
+pré-computados. Três agregações não triviais merecem registro:
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}X@{}}
+\toprule
+\headrow \thd{Agregação} & \thd{O que calcula e por quê}\\
+\midrule
+\cd{severity\_by\_rpm} & Percentis 50, 95 e 99 da velocidade eficaz por família
+  \emph{e} por regime de rotação, mais a linha de base do estado normal no mesmo
+  regime. Usa percentis em vez de média porque as distribuições têm cauda longa
+  e a média seria puxada por transientes de partida.\\
+\zebra \cd{fault\_signatures} & Escore padronizado de cada família em cada
+  \textit{feature} e a razão entre variância inter e intrafamília --- no espírito
+  da estatística $F$ da análise de variância. Mostra objetivamente quais
+  indicadores separam as falhas.\\
+\cd{leakage\_evidence} & Decomposição da dispersão de cada \textit{feature}
+  \emph{entre} campanhas de coleta e \emph{dentro} de cada campanha. É a
+  evidência quantitativa do confundimento analisado na
+  Seção~\ref{sec:vazamento}.\\
+\bottomrule
+\end{tabularx}
+
+\begin{nota}
+As três agregações rodam em torno de \SI{0.2}{\second} sobre \num{166796}
+eventos. Por isso não há pré-cálculo: o painel reflete inclusive os eventos que
+chegam por MQTT durante uma demonstração ao vivo. Interpolação de nomes de
+coluna nas consultas é protegida por lista branca derivada da constante de
+\textit{features} do próprio código --- coluna fora da lista levanta exceção.
+\end{nota}

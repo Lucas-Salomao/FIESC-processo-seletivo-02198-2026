@@ -1,0 +1,437 @@
+% ===========================================================================
+%  9 — RAG e camada de linguagem
+% ===========================================================================
+\chapter{Recuperação documental, geração e agente}
+\label{cap:rag}
+
+Este capítulo documenta a camada que transforma um diagnóstico em
+\emph{instrução de correção}. É onde o requisito mais exigente do enunciado
+--- responder apenas sobre falhas documentadas --- é tecnicamente garantido.
+
+\section{Visão do pipeline}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  % ---- trilha de indexação (offline)
+  \node[c4boundarylbl, anchor=north west, fill=pmxSurface] at (0.3,0.35)
+    {INDEXAÇÃO (offline ou no primeiro \textit{boot})};
+  \draw[c4boundary, fill=pmxBlue!4] (0.2,0.0) rectangle (17.0,-3.4);
+
+  \node[etapaio, text width=22mm] (pdf) at (1.8,-1.7)
+    {\arq{DocN.pdf}\\{\scriptsize procedimento}};
+  \node[etapa, text width=24mm] (ext) at (5.2,-1.7)
+    {\textbf{Extração}\\{\scriptsize página a página; rastreia seção corrente}};
+  \node[etapaerr, text width=22mm] (ocr) at (8.5,-1.7)
+    {\textbf{OCR}\\{\scriptsize só se não houver camada de texto}};
+  \node[etapa, text width=24mm] (chk) at (11.8,-1.7)
+    {\textbf{\textit{Chunking}}\\{\scriptsize $\approx$\num{1200} car.,
+     sobrep.\ 150}};
+  \node[etapa, text width=24mm] (emb) at (15.1,-1.7)
+    {\textbf{\textit{Embedding}}\\{\scriptsize dim.\ 768}};
+
+  \draw[pipe] (pdf) -- (ext);
+  \draw[pipe] (ext) -- (ocr) node[pipelbl, midway, above=1pt]{sem texto};
+  \draw[pipe] (ocr) -- (chk);
+  \draw[pipe] (ext.north) -- (5.2,-0.8) -- (11.8,-0.8) -- (chk.north)
+    node[pipelbl, pos=0.5, above=1pt]{com camada de texto};
+  \draw[pipe] (chk) -- (emb);
+
+  % ---- base vetorial
+  \node[c4db, text width=30mm, minimum height=15mm] (ch) at (8.6,-5.6)
+    {\textbf{ChromaDB --- coleção \cd{manuals}}\tech{HNSW, cosseno}};
+  \draw[pipe] (emb.south) -- (15.1,-5.6) -- (ch.east)
+    node[pipelbl, pos=0.7, above=1pt]{um conjunto por família coberta};
+
+  % ---- trilha de consulta (online)
+  \node[c4boundarylbl, anchor=north west, fill=pmxSurface] at (0.3,-7.15)
+    {CONSULTA (tempo de requisição)};
+  \draw[c4boundary, fill=pmxGreen!4] (0.2,-7.5) rectangle (17.0,-13.6);
+
+  \node[etapaio, text width=24mm] (fam) at (2.0,-8.9)
+    {\textbf{Família prevista}\\{\scriptsize saída do motor de diagnóstico}};
+  \node[decision, text width=30mm] (gd) at (6.4,-8.9)
+    {\textbf{Possui \textit{chunk} indexado?}};
+  \node[etapaerr, text width=32mm] (nao) at (12.4,-8.9)
+    {\textbf{Aviso de falha não documentada}\\{\scriptsize + sugestão de
+     registro --- \textbf{o modelo não é chamado}}};
+  \node[etapa, text width=26mm] (ret) at (4.2,-12.2)
+    {\textbf{Recuperação}\\{\scriptsize \textit{top-k}=6, filtro por família}};
+  \node[etapa, text width=26mm] (pr) at (8.6,-12.2)
+    {\textbf{\textit{Prompt} de contexto fechado}\\{\scriptsize trechos
+     numerados}};
+  \node[etapaout, text width=28mm] (ger) at (13.2,-12.2)
+    {\textbf{Instruções + citações}\\{\scriptsize citação dos metadados, não do
+     texto gerado}};
+
+  \draw[pipe] (fam) -- (gd);
+  \draw[pipe, draw=pmxOrange] (gd.east) -- (nao.west)
+    node[pipelbl, midway, above=1pt]{não};
+  \draw[pipe] (gd.south) -- (6.4,-10.6) -- (4.2,-10.6) -- (ret.north)
+    node[pipelbl, pos=0.25, above=1pt]{sim};
+  \draw[pipe] (ret) -- (pr);
+  \draw[pipe] (pr) -- (ger);
+  \draw[c4reldash] (ch.south) -- (8.6,-6.6) -- (4.2,-6.6) -- (4.2,-8.2)
+    -- (ret.north);
+  \draw[c4reldash] (ch.west) -- (6.4,-5.6) -- (6.4,-7.9)
+    node[cxlabel, pos=0.85, right=2pt]{consulta de cobertura};
+
+\end{tikzpicture}}
+\caption[Pipeline de recuperação e geração]{Pipeline completo de recuperação e
+  geração. As duas trilhas compartilham a mesma base vetorial, que cumpre dois
+  papéis: repositório dos trechos \emph{e} fonte de verdade da cobertura
+  documental. O ramo laranja é o caminho exigido pelo enunciado --- e nele o
+  modelo de linguagem não é invocado.}
+\label{fig:ragpipe}
+\end{figure}
+
+\section{Ingestão documental}
+
+\subsection{Extração e \textit{chunking}}
+
+A extração percorre o PDF página a página, mantendo o rastreio da seção
+corrente por reconhecimento de títulos numerados no padrão \cd{N. Título} ou
+\cd{N.N Título}. Os parágrafos são acumulados em \textit{chunks} de
+aproximadamente \num{1200} caracteres com sobreposição de 150.
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}L{20mm}X@{}}
+\toprule
+\headrow \thd{Parâmetro} & \thd{Valor} & \thd{Justificativa}\\
+\midrule
+Tamanho do \textit{chunk} & $\approx$\num{1200} caracteres &
+  Grande o bastante para conter um passo de procedimento completo com seu
+  contexto; pequeno o bastante para que o \textit{top-k} de 6 trechos caiba
+  confortavelmente no \textit{prompt}.\\
+\zebra Sobreposição & 150 caracteres &
+  Evita que um passo de procedimento seja cortado exatamente na fronteira entre
+  dois \textit{chunks}, o que o tornaria irrecuperável.\\
+Descarte mínimo & 80 caracteres &
+  Fragmentos menores são cabeçalhos, números de página e rodapés --- ruído que
+  degradaria a busca.\\
+\zebra Metadados & doc, título, seção, página, família &
+  \textbf{São a citação.} O usuário vê estes campos, não uma referência
+  produzida pelo modelo.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{OCR: o caso do documento escaneado}
+
+Um dos procedimentos da base inicial é um PDF escaneado, sem camada de texto ---
+situação comum em acervos industriais, onde procedimentos antigos existem apenas
+em papel digitalizado. A extração convencional devolve zero \textit{chunks}.
+
+O tratamento é um \textit{fallback} explícito: se a extração de texto não
+produzir \textit{chunk} algum \emph{e} houver um transcritor disponível, cada
+página é renderizada em imagem a \SI{150}{dpi} e transcrita por modelo
+multimodal, com instrução para preservar títulos numerados em linhas próprias
+--- o que mantém o rastreio de seção funcionando sobre o texto transcrito.
+
+\begin{decisao}
+O OCR é \emph{condicional}, não incondicional. Aplicá-lo sempre custaria uma
+chamada de modelo por página em todo documento --- caro e mais sujeito a erro
+que a extração direta, que é exata quando a camada de texto existe. A
+degradação só ocorre quando é necessária.
+\end{decisao}
+
+\section{\textit{Embeddings} e base vetorial}
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Decisão e justificativa}\\
+\midrule
+Modelo & \cd{gemini-embedding-2}, multilíngue, contexto de \num{8192}
+  \textit{tokens}.\\
+\zebra Dimensionalidade & 768, obtida por truncamento de representação
+  aninhada~\cite{kusupati2022matryoshka}. A propriedade dessas representações é
+  que os primeiros componentes concentram a informação mais relevante, de modo
+  que truncar não exige retreino e degrada pouco a qualidade --- em troca de
+  um quarto do armazenamento e da latência de busca.\\
+Tipo de tarefa & \cd{RETRIEVAL\_DOCUMENT} na indexação e
+  \cd{RETRIEVAL\_QUERY} na consulta. A assimetria é intencional: documento e
+  pergunta são objetos linguísticos diferentes, e o modelo os projeta em
+  espaços alinhados mas com condicionamento distinto.\\
+\zebra Métrica e índice & Cosseno sobre índice HNSW~\cite{malkov2020hnsw}, que
+  oferece busca aproximada com complexidade logarítmica --- irrelevante nos
+  268 \textit{chunks} atuais, decisivo em escala de milhares de
+  procedimentos.\\
+Lote de requisição & Uma instância por requisição. O serviço aceita lista, mas
+  retorna silenciosamente apenas um vetor; o cliente valida explicitamente que
+  o número de vetores devolvidos é igual ao de textos enviados e levanta
+  exceção caso contrário.\\
+\bottomrule
+\end{tabularx}
+
+\begin{atencao}
+A validação de contagem de \textit{embeddings} parece defensiva em excesso até
+se considerar a falha que ela previne: um desalinhamento silencioso entre
+textos e vetores associaria o \textit{embedding} de um trecho ao conteúdo de
+outro. O resultado seria um sistema que recupera trechos errados com total
+confiança --- e sem nenhuma mensagem de erro.
+\end{atencao}
+
+\section{O \textit{guardrail} de cobertura}
+
+\subsection{Definição operacional}
+
+\begin{especificacao}{Regra de cobertura documental}
+Uma família de falha é considerada \textbf{documentada} se, e somente se,
+existe ao menos um \textit{chunk} indexado na base vetorial cujo metadado
+\cd{family} é igual ao nome canônico dessa família.
+\end{especificacao}
+
+Trata-se de uma consulta ao índice, com filtro e limite 1 --- não de uma
+inferência. Três consequências decorrem dessa formulação:
+
+\begin{enumerate}
+  \item \textbf{É verificável.} O estado da cobertura é inspecionável a qualquer
+    momento pelos \textit{endpoints} de saúde e de documentos.
+  \item \textbf{É dinâmica.} Cadastrar um procedimento altera a cobertura na
+    requisição seguinte, sem reinício de serviço e sem edição de configuração.
+  \item \textbf{Não pode ser contornada pelo modelo.} A verificação ocorre no
+    fluxo de controle, antes da montagem do \textit{prompt}. Não existe caminho
+    de código em que o modelo seja chamado para uma família descoberta.
+\end{enumerate}
+
+\subsection{Cobertura inicial e as lacunas deliberadas}
+
+\begin{table}[H]
+\caption{Cobertura documental inicial}
+\label{tab:cobertura}
+\begin{tabularx}{\linewidth}{@{}L{22mm}L{52mm}X@{}}
+\toprule
+\headrow \thd{Documento} & \thd{Famílias cobertas} & \thd{Tema}\\
+\midrule
+\arq{Doc1.pdf} & \cd{rolamento\_inner}, \cd{rolamento\_outer},
+  \cd{rolamento\_ball}, \cd{rolamento\_combination} &
+  Diagnóstico e correção em rolamentos (documento escaneado --- exige OCR)\\
+\zebra \arq{Doc2.pdf} & \cd{desalinhamento} & Correção de desalinhamento em
+  motor elétrico\\
+\arq{Doc3.pdf} & \cd{desbalanceamento} & Correção de desbalanceamento em
+  máquinas rotativas\\
+\zebra \arq{Doc4.pdf} & \cd{correia} & Transmissão por correias\\
+\arq{Doc5.pdf} & \cd{polia} & Polias de sistemas rotativos\\
+\zebra \arq{Doc6.pdf} & \cd{cocked\_rotor} & Rotor inclinado\\
+\midrule
+\multicolumn{3}{@{}l}{\textbf{Sem documento --- acionam o fluxo de falha não
+  documentada}}\\
+--- & \cd{eccentric\_rotor} & \num{16497} ocorrências --- maior lacuna
+  documental do acervo\\
+\zebra --- & \cd{ventoinha} & \num{12299} ocorrências\\
+--- & \cd{falta\_fase} & 800 ocorrências --- e a classe que o modelo melhor
+  reconhece\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Nove das doze famílias de falha estão cobertas por 268 \textit{chunks}. As três
+lacunas não são acidentais: elas permitem demonstrar o comportamento exigido
+pelo enunciado com dados reais, e alimentam a matriz de priorização documental
+do painel (Seção~\ref{sec:priorizacao}).
+
+\section{Anti-alucinação: cinco barreiras}
+
+A geração de conteúdo plausível mas não sustentado pela fonte é a falha
+característica de modelos de linguagem~\cite{ji2023hallucination}. O padrão de
+recuperação aumentada~\cite{lewis2020rag} ataca a raiz do problema ---
+substituir conhecimento paramétrico por conhecimento recuperado --- mas não é
+suficiente por si só. O sistema aplica cinco barreiras em série.
+
+\begin{table}[H]
+\caption{Barreiras anti-alucinação}
+\label{tab:antialuc}
+\begin{tabularx}{\linewidth}{@{}L{8mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{\#} & \thd{Barreira} & \thd{Mecanismo}\\
+\midrule
+1 & \textit{Guardrail} determinístico & O modelo só é chamado se a família
+  possui trechos indexados. A cobertura nunca é decidida pelo modelo.\\
+\zebra 2 & Contexto fechado & A instrução de sistema exige responder
+  \textbf{somente} com base nos trechos fornecidos e declarar explicitamente
+  quando eles não cobrem o ponto perguntado.\\
+3 & Citação determinística & Documento, seção e página vêm dos metadados do
+  trecho recuperado, não do texto gerado. \textbf{Citação alucinada é
+  estruturalmente impossível.}\\
+\zebra 4 & Temperatura baixa & \cd{temperature=0.2} na geração;
+  \cd{0.0} na transcrição por OCR, onde qualquer criatividade é defeito.\\
+5 & Confiança dupla exposta & Probabilidade $\times$ concordância dos vizinhos
+  é apresentada ao usuário; abaixo do limiar, a interface marca o diagnóstico
+  como incerto.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{A instrução de sistema}
+
+\begin{lstlisting}[language=Python, caption={Instrução de sistema do assistente prescritivo --- \arq{src/llm/prompts.py}}, label={lst:sysprompt}]
+SYSTEM_PRESCRIPTIVE = """Voce e um assistente tecnico de manutencao industrial de maquinas rotativas.
+Regras OBRIGATORIAS:
+1. Responda SOMENTE com base nos trechos de documentos fornecidos no contexto.
+2. Se a informacao nao estiver no contexto, diga explicitamente que os documentos
+   disponiveis nao cobrem esse ponto.
+3. Ao usar um trecho, referencie-o pelo marcador [n] correspondente.
+4. Nunca invente procedimentos, valores de tolerancia, normas ou frequencias que
+   nao estejam no contexto.
+5. Responda em portugues do Brasil, em Markdown, com passos numerados quando
+   descrever procedimentos.
+6. Priorize sempre a secao de seguranca antes de qualquer intervencao."""
+\end{lstlisting}
+
+A sexta regra não é anti-alucinação --- é segurança operacional. Um
+procedimento de manutenção que descreve a intervenção antes do bloqueio e
+etiquetagem do equipamento está tecnicamente correto e operacionalmente
+perigoso.
+
+\subsection{Estrutura obrigatória da prescrição}
+
+O \textit{prompt} de prescrição exige cinco seções, na ordem em que um técnico
+as executa: \textbf{segurança} (passos obrigatórios antes da intervenção),
+\textbf{diagnóstico} (como confirmar a falha, incluindo as assinaturas de
+vibração citadas nos trechos), \textbf{correção} (procedimento passo a passo),
+\textbf{validação} (como verificar e quais são os critérios de aceitação) e
+\textbf{prevenção}. A estrutura fixa torna a saída comparável entre falhas e
+auditável.
+
+\section{Agente de conversa}
+
+\subsection{Fronteira arquitetural}
+
+O agente existe \textbf{apenas} no \textit{endpoint} de conversa
+(\adrr{ADR-11}). O caminho crítico de diagnóstico --- usado pelo
+\textit{worker} MQTT, e portanto por toda a planta --- permanece
+determinístico. A razão é direta: um laço agêntico tem número de passos
+variável, latência imprevisível e liberdade de decisão que enfraqueceria
+exatamente as garantias descritas na seção anterior. Onde há garantia a
+preservar, não há agente.
+
+\subsection{Ferramentas}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \node[c4container, text width=30mm, minimum height=13mm] (ui) at (2.0,0)
+    {\textbf{Conversa}\tech{Streamlit}\desc{sessão por aba}};
+  \node[c4container, text width=30mm, minimum height=13mm] (ep) at (6.6,0)
+    {\textbf{\cd{POST /chat}}\tech{FastAPI}};
+  \node[c4component, text width=36mm, minimum height=15mm] (ag) at (11.8,0)
+    {\textbf{Agente}\tech{LlmAgent + Runner}\desc{memória de sessão no
+     Postgres, esquema \cd{adk}}};
+  \node[c4component, text width=32mm, minimum height=13mm,
+        fill=pmxYellowWash, draw=pmxYellow!70!black] (fb) at (11.8,-3.4)
+    {\textbf{\textit{Fallback}: RAG de um passo}\desc{sem agente ou sem
+     credenciais}};
+
+  \node[c4component, text width=40mm, minimum height=11mm] (t1) at (18.4,1.9)
+    {\textbf{\cd{consultar\_historico}}\desc{SQL no Postgres}};
+  \node[c4component, text width=40mm, minimum height=11mm,
+        fill=pmxOrangeWash, draw=pmxOrange] (t2) at (18.4,0.2)
+    {\textbf{\cd{buscar\_documentos}}\desc{\textit{guardrail} + recuperação}};
+  \node[c4component, text width=40mm, minimum height=11mm] (t3) at (18.4,-1.5)
+    {\textbf{\cd{diagnosticar\_evento}}\desc{motor de diagnóstico}};
+  \node[c4component, text width=40mm, minimum height=11mm] (t4) at (18.4,-3.2)
+    {\textbf{\cd{cobertura\_documental}}\desc{índice + banco}};
+
+  \draw[c4rel] (ui) -- (ep);
+  \draw[c4rel] (ep) -- (ag) node[cxlabel, midway, above=1pt]{agente disponível};
+  \draw[c4rel] (ep.south) -- (6.6,-3.4) -- (fb.west)
+    node[cxlabel, pos=0.62, above=1pt]{degradação automática};
+  \draw[c4rel] (ag.east) -- (16.3,1.9);
+  \draw[c4rel] (ag.east) -- (16.3,0.2);
+  \draw[c4rel] (ag.east) -- (16.3,-1.5);
+  \draw[c4rel] (ag.east) -- (16.3,-3.2);
+
+\end{tikzpicture}}
+\caption[Agente de conversa e ferramentas]{Agente de conversa e suas quatro
+  ferramentas. Em laranja, a ferramenta que carrega o \textit{guardrail}: a
+  verificação de cobertura acontece \emph{dentro} dela, antes da recuperação, de
+  modo que o modelo recebe um aviso estruturado em vez de trechos --- e apenas o
+  transmite.}
+\label{fig:agente}
+\end{figure}
+
+\begin{table}[H]
+\caption{Ferramentas do agente}
+\label{tab:ferramentas}
+\begin{tabularx}{\linewidth}{@{}L{38mm}X@{}}
+\toprule
+\headrow \thd{Ferramenta} & \thd{Contrato e comportamento}\\
+\midrule
+\cd{consultar\_historico(familia, dias)} &
+  Consulta agregada ao histórico. Valida a família contra a taxonomia e devolve
+  a lista de famílias válidas em caso de erro --- o que permite ao modelo se
+  autocorrigir. A janela temporal é ancorada no evento \emph{mais recente do
+  banco}, não na data corrente, o que mantém a resposta coerente em um conjunto
+  de dados histórico.\\
+\zebra \cd{buscar\_documentos(consulta, familia)} &
+  \textbf{Obrigatória} antes de descrever qualquer procedimento. Aplica o
+  \textit{guardrail}: família sem cobertura devolve
+  \cd{documentado=false} e o aviso pronto. Família coberta devolve os trechos
+  numerados com origem. Registra as citações no coletor de contexto.\\
+\cd{diagnosticar\_evento(json)} &
+  Executa o motor de diagnóstico sobre um JSON colado pelo usuário. JSON
+  inválido devolve os erros de validação em forma legível, não uma exceção.\\
+\zebra \cd{cobertura\_documental()} &
+  Lista famílias documentadas, famílias sem documento e documentos cadastrados
+  com data de ingestão.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Citações determinísticas no agente}
+
+Em um agente, a dificuldade adicional é que a recuperação acontece dentro de uma
+ferramenta, várias camadas abaixo do código que monta a resposta HTTP. A solução
+adotada é um coletor por contexto de execução (\textit{context variable}): a
+ferramenta registra ali os metadados dos trechos que efetivamente recuperou, e o
+\textit{endpoint} lê o coletor ao final da execução.
+
+\begin{decisao}
+O coletor por contexto de execução é preferível a uma variável global porque é
+isolado por tarefa assíncrona: duas conversas simultâneas não misturam citações.
+E é preferível a inspecionar o texto gerado pelo modelo em busca de marcadores,
+porque preserva a propriedade central --- a citação exibida reflete o que foi
+\emph{recuperado}, não o que o modelo \emph{escreveu}.
+\end{decisao}
+
+\subsection{Degradação graciosa}
+
+A inicialização do agente pode falhar por três motivos: biblioteca ausente,
+projeto de nuvem não configurado ou credenciais inválidas. Em todos os casos a
+função de obtenção do agente devolve nulo, e o \textit{endpoint} de conversa
+recorre ao RAG de um passo. A interface indica o modo em uso por um selo
+--- \enquote{agente com ferramentas e memória} ou \enquote{recuperação direta}
+--- para que o usuário saiba o que esperar.
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \raia{1.7}{-9.6}{Usuário}{interface}
+  \raia{5.4}{-9.6}{\cd{POST /chat}}{FastAPI}
+  \raia{9.1}{-9.6}{Agente}{LlmAgent}
+  \raia{12.8}{-9.6}{Ferramentas}{4 funções}
+  \raiaext{16.5}{-9.6}{Recursos}{Postgres, Chroma, Vertex}
+
+  \msgs{1.7}{5.4}{-1.1}{pergunta + \cd{session\_id}}
+  \msgs{5.4}{9.1}{-1.85}{\cd{ask(message, session\_id)}}
+  \msgself{9.1}{-2.5}{recupera memória da sessão (esquema \cd{adk})}
+  \msgs{9.1}{12.8}{-3.4}{decide e invoca ferramenta}
+  \msgs{12.8}{16.5}{-4.05}{SQL ou consulta vetorial}
+  \msgr{16.5}{12.8}{-4.7}{dados estruturados}
+  \msgself{12.8}{-5.35}{registra citações no coletor de contexto}
+  \msgr{12.8}{9.1}{-6.2}{resultado JSON}
+  \msgself{9.1}{-6.85}{repete se necessário (múltiplas ferramentas)}
+  \msgs{9.1}{16.5}{-7.7}{geração final em contexto fechado}
+  \msgr{16.5}{5.4}{-8.35}{texto em Markdown}
+  \msgr{5.4}{1.7}{-9.1}{resposta + citações do coletor + selo de modo}
+
+\end{tikzpicture}}
+\caption[Sequência da conversa com agente]{Diagrama de sequência da conversa
+  com agente. As citações devolvidas ao usuário vêm do coletor alimentado pelas
+  ferramentas --- não do texto gerado na última etapa.}
+\label{fig:seqchat}
+\end{figure}

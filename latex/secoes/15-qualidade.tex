@@ -1,0 +1,225 @@
+% ===========================================================================
+%  15 — Qualidade, testes e CI/CD
+% ===========================================================================
+\chapter{Qualidade, testes e integração contínua}
+\label{cap:qualidade}
+
+\section{Estratégia de testes}
+
+A suíte tem \textbf{63 testes} e uma propriedade que determinou todo o desenho
+da camada de linguagem: ela executa \textbf{sem rede e sem credenciais}. Nenhum
+teste chama o serviço de linguagem real.
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \node[action, text width=48mm, fill=pmxGreenWash, draw=pmxGreen]
+       (u) at (5.0,-6.2)
+    {\textbf{Unitários} --- 13 testes\\{\scriptsize canonicalização,
+     severidade, \textit{features}, \textit{chunking}}};
+  \node[action, text width=48mm, fill=pmxBlueWash, draw=pmxBlue]
+       (i) at (5.0,-3.6)
+    {\textbf{Integração} --- 41 testes\\{\scriptsize \textit{guardrail}, RAG,
+     ferramentas do agente, agregações}};
+  \node[action, text width=48mm, fill=pmxOrangeWash, draw=pmxOrange]
+       (e) at (5.0,-1.2)
+    {\textbf{Ponta a ponta} --- 9 testes\\{\scriptsize \textit{endpoints} da API
+     com cliente de teste}};
+
+  \node[actnote, text width=56mm, anchor=north west] at (11.0,-0.6)
+    {\textbf{Base larga em integração, não em unitários.} O risco deste sistema
+     não está em funções isoladas --- está nas \emph{fronteiras}: o
+     \textit{guardrail} realmente impede a chamada ao modelo? A citação vem
+     mesmo dos metadados? A agregação estratifica de fato por rotação? São
+     perguntas de integração, e é onde os testes se concentram.};
+
+  \node[objflow, text width=48mm, anchor=north] at (5.0,-7.6)
+    {\textbf{Substituições:} cliente de linguagem \textit{fake} determinístico
+     $\cdot$ SQLite em memória $\cdot$ artefatos treinados sobre CSV sintético
+     minúsculo};
+
+\end{tikzpicture}}
+\caption[Distribuição dos testes]{Distribuição dos 63 testes. A forma é
+  deliberadamente diferente da pirâmide canônica~\cite{cohn2009agile}: o volume
+  está na camada de integração, porque é ali que residem as garantias que este
+  sistema promete.}
+\label{fig:testes}
+\end{figure}
+
+\subsection{Substituições que tornam a suíte offline}
+
+\begin{table}[H]
+\caption{Substituições de dependência nos testes}
+\label{tab:fakes}
+\begin{tabularx}{\linewidth}{@{}L{32mm}X@{}}
+\toprule
+\headrow \thd{Dependência real} & \thd{Substituição e propriedade preservada}\\
+\midrule
+Cliente de linguagem & \textit{Fake} que implementa o mesmo protocolo.
+  \textit{Embeddings} são derivados de \textit{hash} SHA-256 do texto ---
+  determinísticos e, portanto, testáveis quanto a ordenação de similaridade. A
+  geração devolve texto fixo com marcadores de citação. O \textit{fake} registra
+  as chamadas, o que permite testar a propriedade mais importante do sistema:
+  \emph{que ele não foi chamado}.\\
+\zebra Banco de dados & SQLite em memória, injetado por sobrescrita de
+  dependência. Suficiente para o modelo de domínio; insuficiente para as
+  agregações analíticas, que exigem recursos estatísticos do PostgreSQL.\\
+Artefatos de ML & Treinados durante a inicialização da suíte sobre um CSV
+  sintético minúsculo. Isso cobre, de graça, o \textit{pipeline} de treino de
+  ponta a ponta --- e mantém a suíte independente dos artefatos de
+  \SI{74}{\mebi\byte}.\\
+\zebra Base vetorial & Diretório temporário por sessão de teste, apontado por
+  variável de ambiente antes dos \textit{imports} com memoização.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{decisao}
+O cliente de linguagem foi definido como \textbf{protocolo} (interface
+estrutural), não como classe concreta a herdar. A consequência: o \textit{fake}
+não precisa importar nem conhecer a implementação real --- basta ter os três
+métodos com as assinaturas corretas. Isso mantém o código de teste livre de
+dependência sobre a biblioteca de nuvem, que assim não precisa nem estar
+instalada para a suíte rodar.
+\end{decisao}
+
+\section{Suíte de testes}
+
+\begin{table}[H]
+\caption{Arquivos de teste e o que cada um garante}
+\label{tab:suite}
+\begin{tabularx}{\linewidth}{@{}L{40mm}L{14mm}X@{}}
+\toprule
+\headrow \thd{Arquivo} & \thd{Testes} & \thd{Garantia verificada}\\
+\midrule
+\arq{test\_canonize.py} & 4 &
+  Rótulos reais --- inclusive os com erro de digitação --- caem na família
+  correta; rótulo desconhecido levanta exceção; o sinalizador de falha está
+  correto para as 17 famílias; toda família tem descrição de exibição.\\
+\zebra \arq{test\_rag\_guardrail.py} & 9 &
+  \textbf{O núcleo do requisito \req{RF-04}.} Inclui
+  \cd{test\_undocumented\_never\_calls\_llm}, que verifica que o registro de
+  chamadas do \textit{fake} permanece \emph{vazio} para família sem documento.
+  Cobre também o \textit{fallback} de OCR, o filtro por família na recuperação e
+  a sugestão de registro.\\
+\arq{test\_api.py} & 7 &
+  Contratos dos \textit{endpoints}: saúde, diagnóstico documentado, diagnóstico
+  não documentado, estado operacional, \textit{payload} inválido, conversa e
+  rejeição de família inexistente no cadastro de documento.\\
+\zebra \arq{test\_agent\_tools.py} & 11 &
+  Cada uma das quatro ferramentas do agente, incluindo o \textit{guardrail}
+  dentro da busca documental, JSON inválido no diagnóstico e família inexistente
+  na consulta ao histórico. Verifica também que o \textit{endpoint} usa o agente
+  quando disponível e degrada quando não.\\
+\arq{test\_analytics.py} & 5 &
+  As agregações: estratificação por rotação, linha de base do mesmo regime,
+  escores padronizados com poder discriminativo, detecção da
+  \textit{feature}-carimbo de sessão e rejeição de coluna fora da lista
+  branca.\\
+\midrule
+\zebra \textbf{Total} & \textbf{63} & Coletados por parametrização dos casos
+  acima.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{O teste mais importante da suíte}
+
+\begin{lstlisting}[language=Python, caption={O teste que verifica a garantia central: o modelo não é chamado para família sem documento}, label={lst:testeguard}]
+def test_undocumented_never_calls_llm(fake_llm, undocumented_family, event):
+    """Familia sem chunk indexado nao deve produzir NENHUMA chamada ao modelo."""
+    fake_llm.generate_calls.clear()
+
+    prescription, suggestion = rag_service.prescribe(
+        undocumented_family, event, fake_llm
+    )
+
+    assert prescription is None            # nao ha prescricao
+    assert suggestion is not None          # ha aviso e sugestao de registro
+    assert fake_llm.generate_calls == []   # <- a garantia: zero chamadas
+\end{lstlisting}
+
+A última asserção é o que distingue uma garantia de uma intenção. Sem ela, uma
+refatoração futura poderia mover a verificação de cobertura para \emph{depois}
+da montagem do \textit{prompt} --- o comportamento visível continuaria correto,
+mas o modelo passaria a ser chamado, e o custo e o risco de alucinação
+voltariam sem que ninguém percebesse.
+
+\section{Integração contínua}
+
+O fluxo tem três etapas sequenciais e bloqueantes (\req{AT-12}):
+
+\begin{table}[H]
+\caption{Etapas do fluxo de integração contínua}
+\label{tab:ci}
+\begin{tabularx}{\linewidth}{@{}L{20mm}L{34mm}X@{}}
+\toprule
+\headrow \thd{Etapa} & \thd{O que executa} & \thd{Por que bloqueia}\\
+\midrule
+\textit{Lint} & Verificação de regras e de formatação em código, testes e
+  \textit{scripts} & Estilo inconsistente polui o \textit{diff} de revisões
+  futuras e esconde mudanças reais.\\
+\zebra Testes & Suíte completa, com PostgreSQL como serviço de apoio &
+  É a porta de qualidade funcional. As credenciais de nuvem não são
+  fornecidas --- e não são necessárias.\\
+Construção & Construção da imagem única & Garante que a imagem que será
+  implantada realmente constrói, antes de qualquer implantação.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{nota}
+As credenciais de nuvem existem apenas como segredos de repositório e como
+arquivo local não versionado. O fluxo de CI \textbf{não} as recebe, porque não
+precisa: o \textit{fake} implementa a mesma interface do cliente real e é
+injetado por sobrescrita de dependência. Um fluxo de CI que exige segredos para
+rodar é um fluxo que ninguém consegue executar em um \textit{fork}.
+\end{nota}
+
+\section{Padrões de código}
+
+\begin{tabularx}{\linewidth}{@{}L{36mm}X@{}}
+\toprule
+\headrow \thd{Padrão} & \thd{Aplicação e motivo}\\
+\midrule
+Linha de 100 colunas & Compatível com revisão em tela dividida sem quebra de
+  linha artificial.\\
+\zebra Conjuntos de regras habilitados & Erros, \textit{imports} desordenados,
+  construções obsoletas para a versão de linguagem alvo e armadilhas comuns.\\
+Exceção documentada & Argumento padrão mutável é permitido porque é o idioma do
+  \textit{framework} web usado --- a exceção está registrada na configuração,
+  com o motivo.\\
+\zebra Tipagem em fronteiras & Anotações de tipo em todas as funções públicas.
+  Os esquemas de domínio são a fonte de verdade de tipo, e a especificação
+  OpenAPI é derivada deles.\\
+\textit{Docstrings} explicando \emph{por quê} & As \textit{docstrings} do
+  projeto registram a \emph{razão} das decisões, não a repetição do nome da
+  função. Boa parte deste documento foi consolidada a partir delas.\\
+\zebra Configuração externalizada & Toda configuração vem de variáveis de
+  ambiente com valores padrão sensatos, conforme o padrão de doze
+  fatores~\cite{wiggins2017twelvefactor}.\\
+\bottomrule
+\end{tabularx}
+
+\section{Lacunas conhecidas de teste}
+
+\begin{limitacao}
+\begin{itemize}
+  \item \textbf{O \textit{worker} MQTT não tem teste automatizado.} Sua
+    verificação é o roteiro manual da Seção~\ref{sec:demonstracao}. A ausência é
+    consciente: um teste real exigiria \textit{broker} embarcado no fluxo de CI.
+    A lógica testável --- validação e canonicalização --- é compartilhada com a
+    API e está coberta por lá.
+  \item \textbf{A interface não tem teste automatizado.} É camada de
+    apresentação sem lógica de domínio; o risco de regressão silenciosa é baixo
+    e o custo de instrumentação seria alto.
+  \item \textbf{Os testes de analítica são pulados sem PostgreSQL.} Eles exigem
+    recursos estatísticos ausentes no SQLite. São executados no fluxo de CI, que
+    provê o banco como serviço.
+  \item \textbf{Não há teste de carga.} Os números de latência citados neste
+    documento vêm de medição pontual em ambiente local, não de teste de
+    desempenho sistemático.
+\end{itemize}
+\end{limitacao}

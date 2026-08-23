@@ -1,0 +1,784 @@
+% ===========================================================================
+%  Apendice A — Fontes Mermaid dos diagramas
+% ===========================================================================
+\chapter{Fontes Mermaid dos diagramas}
+\label{ap:mermaid}
+
+Os diagramas do corpo do documento são vetoriais e desenhados nativamente em
+\TeX{}, o que garante tipografia uniforme e nitidez em qualquer ampliação. Este
+apêndice fornece o código-fonte \textbf{Mermaid} equivalente de cada um, para uso
+direto em \arq{README.md}, plataformas de repositório, \textit{wikis} e
+ferramentas de documentação que renderizam Mermaid nativamente.
+
+\begin{nota}
+Duas notações do corpo do documento não têm equivalente exato em Mermaid: o
+diagrama de casos de uso (Figura~\ref{fig:casosdeuso}) --- Mermaid não implementa
+a notação UML de casos de uso, e a aproximação abaixo usa um grafo com
+agrupamentos --- e as raias dos diagramas de atividade, expressas aqui como
+subgrafos rotulados.
+\end{nota}
+
+% ---------------------------------------------------------------------------
+\section{Visão geral do sistema}
+
+\begin{lstlisting}[language=mermaid, caption={Visão geral --- fluxo completo entre entrada, aplicação e nuvem}, label={lst:mmvisao}]
+flowchart TB
+    subgraph ENTRADA["Entrada"]
+        SENS["Sensores IIoT / simulador<br/>(replay do dataset)"]
+        EV["Novo evento JSON<br/>(REST direto)"]
+        USR["Usuario<br/>(chat / novos documentos)"]
+    end
+
+    subgraph APP["Estacao de trabalho (docker-compose)"]
+        MQTT["Broker MQTT<br/>Eclipse Mosquitto<br/>topic: sensors/+/telemetry"]
+        WRK["Ingestion Worker<br/>(paho-mqtt -> valida -> Postgres<br/>-> dispara /diagnose -> alerts)"]
+        subgraph UI["Frontend — Streamlit"]
+            DASH["Dashboard"]
+            CHAT["Chat prescritivo"]
+            UPL["Upload de documentos"]
+        end
+        subgraph API["Backend — FastAPI"]
+            RT["/diagnose /chat /events<br/>/stats /documents /health"]
+            DIAG["Motor de Diagnostico<br/>KNN + LightGBM"]
+            GUARD["Guardrail de cobertura<br/>documental (deterministico)"]
+            RAGS["Servico RAG<br/>(retrieve -> prompt -> cite)"]
+        end
+        PG[("PostgreSQL<br/>historico de eventos")]
+        CH[("ChromaDB<br/>chunks dos documentos")]
+        ART["Artefatos ML<br/>scaler + knn + lgbm"]
+    end
+
+    subgraph GCP["Google Cloud — Vertex AI"]
+        EMB["gemini-embedding-2"]
+        LLM["gemini-3.6-flash"]
+    end
+
+    SENS -->|publish JSON| MQTT
+    MQTT -->|subscribe| WRK
+    WRK --> PG
+    WRK --> RT
+    EV --> RT
+    USR --> CHAT & UPL
+    DASH & CHAT & UPL --> RT
+    RT --> DIAG --> GUARD
+    GUARD -->|familia documentada| RAGS
+    GUARD -->|sem documento| RT
+    DIAG <--> PG
+    DIAG <--> ART
+    RAGS <--> CH
+    RAGS --> LLM
+    UPL -->|ingestao| CH
+    RAGS & UPL --> EMB
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{C4 nível 1 --- Contexto (Figura~\ref{fig:c4l1})}
+
+\begin{lstlisting}[language=mermaid, caption={C4 nível 1 --- contexto do sistema}, label={lst:mmc4l1}]
+C4Context
+    title Sistema de Manutencao Prescritiva — Contexto
+
+    Person(tec,  "Tecnico de manutencao",   "Diagnostica e executa o procedimento")
+    Person(eng,  "Engenheiro de manutencao","Analisa historico e documenta")
+    Person(dat,  "Engenheiro de dados",     "Carrega, treina e monitora")
+
+    System(pmx, "Sistema de Manutencao Prescritiva",
+        "Identifica o defeito, quantifica ocorrencias semelhantes e prescreve a
+         correcao fundamentada na base documental — restrito a falhas documentadas")
+
+    System_Ext(gw,    "Gateway de aquisicao IIoT", "Sensores de vibracao")
+    System_Ext(scada, "SCADA / CMMS",              "Ordens de servico")
+    System_Ext(vertex,"Vertex AI — Gemini",        "Embeddings, geracao e OCR")
+
+    Rel(tec, pmx, "Diagnostica, consulta")
+    Rel(eng, pmx, "Analisa, cadastra documento")
+    Rel(dat, pmx, "Carrega, treina")
+    Rel(gw,  pmx, "Telemetria", "MQTT")
+    Rel(pmx, scada, "Alertas, DLQ", "MQTT")
+    BiRel(pmx, vertex, "Embeddings, geracao, OCR", "HTTPS")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{C4 nível 2 --- Contêineres (Figuras~\ref{fig:c4l2app} a~\ref{fig:c4l2batch})}
+
+\begin{lstlisting}[language=mermaid, caption={C4 nível 2 --- contêineres (os três planos em uma única vista)}, label={lst:mmc4l2}]
+C4Container
+    title Sistema de Manutencao Prescritiva — Conteineres
+
+    Person(tec, "Tecnico de manutencao", "")
+    Person(eng, "Engenheiro de manutencao", "")
+    Person(dat, "Engenheiro de dados / MLOps", "")
+
+    System_Boundary(pmx, "Sistema de Manutencao Prescritiva") {
+        Container(ui,   "Interface",           "Streamlit + Plotly", "Paineis, diagnostico, conversa, documentos")
+        Container(api,  "API de aplicacao",    "FastAPI + Uvicorn",  "Diagnostico, prescricao, conversa, analitica")
+        Container(wk,   "Worker de ingestao",  "paho-mqtt",          "Valida, persiste, diagnostica, alerta")
+        ContainerQueue(mq,"Broker MQTT",       "Eclipse Mosquitto 2","telemetry / alerts / dlq")
+        Container(scr,  "Scripts de preparacao","Python 3.12 CLI",   "ETL, treino, ingestao documental, simulador")
+        ContainerDb(pg, "Historico",           "PostgreSQL 16",      "Eventos, taxonomia, documentos, auditoria")
+        ContainerDb(ch, "Base vetorial",       "ChromaDB (HNSW)",    "Chunks + metadados; fonte da cobertura")
+        Container(art,  "Artefatos de ML",     "joblib",             "scaler, lgbm, knn, index_meta (74 MB)")
+    }
+
+    System_Ext(gw,    "Gateway IIoT", "Publica telemetria")
+    System_Ext(scada, "SCADA / CMMS", "Consome alertas")
+    System_Ext(vertex,"Vertex AI",    "Gemini")
+
+    Rel(tec, ui, "Usa", "HTTPS")
+    Rel(eng, ui, "Usa", "HTTPS")
+    Rel(dat, scr,"Executa", "CLI")
+    Rel(ui,  api,"Consome", "JSON/HTTP (rede privada)")
+    Rel(api, pg, "Le e escreve", "SQLAlchemy")
+    Rel(api, ch, "Consulta e indexa", "")
+    Rel(api, art,"Carrega em memoria", "joblib")
+    Rel(api, vertex, "Embeddings e geracao", "HTTPS")
+    Rel(gw,  mq, "Publica telemetria", "MQTT QoS 1")
+    Rel(mq,  wk, "Entrega", "MQTT QoS 1")
+    Rel(wk,  pg, "merge idempotente", "")
+    Rel(wk,  api,"POST /diagnose", "HTTP")
+    Rel(wk,  mq, "Publica alerts / dlq", "MQTT QoS 1")
+    Rel(mq,  scada, "Entrega alertas", "MQTT")
+    Rel(scr, pg, "Carga do historico", "")
+    Rel(scr, ch, "Indexacao inicial", "")
+    Rel(scr, art,"Gravacao do treino", "")
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{C4 nível 3 --- Componentes da API (Figura~\ref{fig:c4l3})}
+
+\begin{lstlisting}[language=mermaid, caption={C4 nível 3 --- componentes do contêiner de API}, label={lst:mmc4l3}]
+C4Component
+    title API de aplicacao — Componentes
+
+    Container_Boundary(api, "API de aplicacao (FastAPI)") {
+        Component(rt,   "Roteadores REST",        "src/api/main.py",     "/diagnose /chat /stats /events /documents /health /analytics/*")
+        Component(dep,  "Injecao de dependencias","src/api/deps.py",     "Sessao, cliente de linguagem, agente — substituiveis em teste")
+        Component(mot,  "Motor de diagnostico",   "src/ml/diagnose.py",  "LightGBM + KNN + gate de confianca")
+        Component(rag,  "Servico RAG",            "src/rag/service.py",  "Recupera, monta prompt, cita")
+        Component(gd,   "Guardrail de cobertura", "src/rag/store.py",    "Decisao deterministica")
+        Component(ag,   "Agente e ferramentas",   "src/llm/agent*.py",   "4 ferramentas, memoria de sessao")
+        Component(anl,  "Agregacoes analiticas",  "src/api/analytics.py","SQL sob demanda")
+        Component(orm,  "Modelos ORM",            "src/core/db.py",      "SQLAlchemy 2.0")
+        Component(vs,   "Adaptador vetorial",     "src/rag/store.py",    "ChromaDB")
+        Component(cli,  "Cliente de linguagem",   "src/llm/client.py",   "Protocolo substituivel")
+        Component(cn,   "Canonizador",            "src/etl/canonize.py", "Regras regex ordenadas")
+        Component(bs,   "Bootstrap documental",   "src/rag/bootstrap.py","Indexacao no primeiro boot")
+        Component(cfg,  "Configuracao",           "src/core/config.py",  "pydantic-settings")
+        Component(sch,  "Esquemas de dominio",    "src/core/schemas.py", "pydantic v2 — UNICOS")
+    }
+
+    ContainerDb(pg, "PostgreSQL", "", "")
+    ContainerDb(ch, "ChromaDB",   "", "")
+    System_Ext(vx,  "Vertex AI",  "")
+
+    Rel(rt, mot, "Diagnostica")
+    Rel(rt, rag, "Prescreve")
+    Rel(rt, ag,  "Conversa")
+    Rel(rt, anl, "Agrega")
+    Rel(rt, bs,  "Dispara no startup")
+    Rel(dep, cli, "Fornece")
+    Rel(mot, rag, "Familia prevista")
+    Rel(rag, gd,  "Consulta cobertura")
+    Rel(ag,  gd,  "Reutiliza (dentro da ferramenta)")
+    Rel(mot, orm, "")
+    Rel(rag, vs,  "")
+    Rel(gd,  vs,  "")
+    Rel(vs,  ch,  "HNSW / cosseno")
+    Rel(orm, pg,  "")
+    Rel(anl, pg,  "SQL")
+    Rel(cli, vx,  "HTTPS")
+    Rel(mot, cn,  "")
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{C4 nível 4 --- Classes (Figura~\ref{fig:c4l4})}
+
+\begin{lstlisting}[language=mermaid, caption={C4 nível 4 --- classes do motor de diagnóstico}, label={lst:mmc4l4}]
+classDiagram
+    class SensorEvent {
+        +int id
+        +datetime created_at
+        +str fault
+        +float z_rms_velocity_mm_s
+        +float x_rms_velocity_mm_s
+        +float temperature_c
+        +float ...15 demais grandezas
+        +float rpm
+        +feature_vector() list~float~
+    }
+    class DiagnosisEngine {
+        -StandardScaler scaler
+        -LGBMClassifier clf
+        -NearestNeighbors knn
+        -DataFrame index_meta
+        -LabelCanonizer canonizer
+        +diagnose(event) DiagnosisResult
+        -_similar_events(family, neighbors)
+        -_confidence(probability, agreement) str
+    }
+    class DiagnosisResult {
+        +str family
+        +bool is_fault
+        +float probability
+        +float knn_agreement
+        +str confidence
+        +SimilarEvents similar
+    }
+    class SimilarEvents {
+        +int count
+        +datetime first_seen
+        +datetime last_seen
+        +float freq_per_day
+        +list timeline
+        +list neighbor_ids
+        +float neighbor_agreement
+    }
+    class LabelCanonizer {
+        -dict families
+        -list _rules
+        +canonize(raw_label) Family
+        +fault_families() list~str~
+    }
+    class DiagnoseResponse {
+        +str predicted_fault
+        +bool is_fault
+        +float probability
+        +float knn_agreement
+        +str confidence
+        +SimilarEvents similar_events
+        +bool documented
+        +Prescription prescription
+        +str suggestion
+    }
+
+    DiagnosisEngine ..> SensorEvent : usa
+    DiagnosisEngine ..> DiagnosisResult : produz
+    DiagnosisEngine *-- LabelCanonizer
+    DiagnosisResult *-- SimilarEvents
+    DiagnosisResult ..> DiagnoseResponse : mapeia para
+    DiagnoseResponse *-- SimilarEvents
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Modelo entidade-relacionamento (Figura~\ref{fig:er})}
+
+\begin{lstlisting}[language=mermaid, caption={Modelo entidade-relacionamento}, label={lst:mmer}]
+erDiagram
+    FAULT_FAMILIES ||--o{ LABEL_MAP    : canonicaliza
+    FAULT_FAMILIES ||--o{ EVENTS       : classifica
+    FAULT_FAMILIES ||--o{ DOC_COVERAGE : cobre
+    FAULT_FAMILIES ||--o{ DIAGNOSES    : preve
+    DOCUMENTS      ||--o{ DOC_COVERAGE : referencia
+    EVENTS         ||--o{ DIAGNOSES    : gera
+
+    FAULT_FAMILIES {
+        int  id       PK
+        text name     UK
+        bool is_fault
+    }
+    LABEL_MAP {
+        text raw_label PK
+        int  family_id FK
+    }
+    EVENTS {
+        bigint      id         PK "identificador de origem, sem autoincrement"
+        timestamptz created_at     "indexado"
+        text        raw_fault      "identifica tambem a campanha de coleta"
+        int         family_id  FK  "indexado, pode ser nulo"
+        float       z_rms_velocity_mm_s
+        float       x_rms_velocity_mm_s
+        float       temperature_c
+        float       demais_15_grandezas
+        float       rpm
+    }
+    DOCUMENTS {
+        int         id          PK
+        text        filename
+        text        title
+        timestamptz ingested_at
+        text        status
+    }
+    DOC_COVERAGE {
+        int family_id   PK
+        int document_id PK
+    }
+    DIAGNOSES {
+        bigint      id                   PK
+        bigint      event_id                "sem FK: evento ad hoc"
+        int         predicted_family_id  FK
+        float       probability
+        json        neighbors
+        json        llm_response
+        timestamptz created_at
+    }
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Sequência do diagnóstico (Figura~\ref{fig:seqdiagnose})}
+
+\begin{lstlisting}[language=mermaid, caption={Sequência do diagnóstico completo}, label={lst:mmseqdiag}]
+sequenceDiagram
+    participant U as Solicitante (tecnico ou worker)
+    participant A as API (FastAPI)
+    participant D as Motor (LightGBM + KNN)
+    participant P as Dados (Postgres + artefatos)
+    participant G as Guardrail + RAG (Chroma)
+    participant V as Vertex AI (Gemini)
+
+    U->>A: POST /api/v1/diagnose (JSON do evento)
+    A->>A: valida esquema SensorEvent
+    A->>D: engine.diagnose(event)
+    D->>D: 18 brutas + 5 derivadas, padronizadas
+    D->>P: predict_proba + kneighbors (k=25)
+    P-->>D: familia, probabilidade, 25 vizinhos
+    D->>D: concordancia e gate de confianca
+    D->>P: estatisticas historicas da familia
+    P-->>D: contagem, periodo, freq/dia, serie mensal
+    D-->>A: DiagnosisResult
+
+    alt familia de falha COM documento indexado
+        A->>G: prescribe(family, event)
+        G->>V: embedding + geracao em contexto fechado
+        V-->>G: instrucoes em Markdown
+        G-->>A: prescricao + citacoes dos metadados
+    else familia de falha SEM documento indexado
+        A->>G: is_documented(family) -> falso
+        Note over G,V: O Vertex AI NAO e chamado.<br/>Aviso + sugestao de registro.
+        G-->>A: suggestion
+    end
+
+    A-->>U: DiagnoseResponse + auditoria persistida
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Sequência da ingestão MQTT (Figura~\ref{fig:seqmqtt})}
+
+\begin{lstlisting}[language=mermaid, caption={Sequência da ingestão industrial}, label={lst:mmseqmqtt}]
+sequenceDiagram
+    participant S as Simulador / gateway
+    participant B as Broker (Mosquitto)
+    participant W as Worker (paho-mqtt)
+    participant P as PostgreSQL
+    participant A as API /diagnose
+
+    S->>B: publish sensors/maquina-01/telemetry (QoS 1)
+    B->>W: entrega (subscribe sensors/+/telemetry)
+    W->>W: valida com o schema pydantic UNICO da API
+
+    alt payload valido
+        W->>W: canonicaliza a anotacao, se houver
+        W->>P: session.merge(Event) — idempotente por PK
+        W->>A: POST /api/v1/diagnose
+        A-->>W: diagnostico completo
+        W->>B: publish sensors/maquina-01/alerts (se for falha)
+        B->>S: entrega ao SCADA / CMMS assinante
+    else payload invalido
+        W->>B: publish sensors/maquina-01/dlq (motivo + payload)
+        Note over W,P: Nada e gravado no banco.<br/>O dado permanece recuperavel na DLQ.
+    end
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Sequência da conversa com agente (Figura~\ref{fig:seqchat})}
+
+\begin{lstlisting}[language=mermaid, caption={Sequência da conversa com o agente}, label={lst:mmseqchat}]
+sequenceDiagram
+    participant U as Usuario (interface)
+    participant E as POST /chat (FastAPI)
+    participant G as Agente (LlmAgent)
+    participant T as Ferramentas (4 funcoes)
+    participant R as Recursos (Postgres, Chroma, Vertex)
+
+    U->>E: pergunta + session_id
+    alt agente disponivel
+        E->>G: ask(message, session_id)
+        G->>G: recupera memoria da sessao (schema adk)
+        loop enquanto precisar de ferramenta
+            G->>T: decide e invoca ferramenta
+            T->>R: SQL ou consulta vetorial
+            R-->>T: dados estruturados
+            T->>T: registra citacoes no coletor de contexto
+            T-->>G: resultado JSON
+        end
+        G->>R: geracao final em contexto fechado
+        R-->>E: texto em Markdown
+    else agente indisponivel (sem lib ou credenciais)
+        E->>R: RAG de um passo (rag_service.chat)
+        R-->>E: texto em Markdown
+    end
+    E-->>U: resposta + citacoes do coletor + selo de modo
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Pipeline de dados e documentos (Figuras~\ref{fig:etl} e~\ref{fig:ragpipe})}
+
+\begin{lstlisting}[language=mermaid, caption={Pipeline de dados e pipeline documental}, label={lst:mmpipe}]
+flowchart LR
+    subgraph ETL["ETL de dados (scripts/ingest_data.py)"]
+        CSV["banner.csv<br/>166.796 linhas"] --> CLEAN["Limpeza + dedup +<br/>validacao"]
+        CLEAN --> CANON["Canonicalizacao<br/>label_map.yaml<br/>151 rotulos -> 17 familias"]
+        CANON -->|rotulo desconhecido| ERR["Excecao: nada e gravado"]
+        CANON --> PGL[("PostgreSQL<br/>events + fault_families<br/>+ label_map")]
+        PGL --> FEAT["Treino (src/ml/train.py):<br/>StandardScaler + KNN + LightGBM"]
+        FEAT --> ARTS["artifacts/<br/>joblib + metrics.json"]
+    end
+    subgraph DOCPIPE["Ingestao documental (scripts/ingest_docs.py)"]
+        PDFS["Doc1..Doc6.pdf<br/>+ novos uploads via API"] --> PARSE["Extracao pymupdf<br/>por secao"]
+        PARSE -->|sem camada de texto| OCR["OCR multimodal<br/>(Gemini, 150 dpi)"]
+        OCR --> CHUNK
+        PARSE --> CHUNK["Chunks ~1200 chars c/ overlap<br/>metadados: doc, secao, pagina, familia"]
+        CHUNK --> GEMB["gemini-embedding-2<br/>(dim 768)"]
+        GEMB --> CHR[("ChromaDB<br/>collection: manuals")]
+    end
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Casos de uso (Figura~\ref{fig:casosdeuso})}
+
+\begin{lstlisting}[language=mermaid, caption={Casos de uso --- aproximação em grafo (Mermaid não implementa a notação UML de casos de uso)}, label={lst:mmuc}]
+flowchart LR
+    tec(["Tecnico de manutencao"])
+    eng(["Engenheiro de manutencao"])
+    dat(["Engenheiro de dados / MLOps"])
+    gw(["Gateway de aquisicao IIoT"])
+    scada(["SCADA / CMMS"])
+    vx(["Vertex AI (Gemini)"])
+
+    subgraph SIS["Sistema de Manutencao Prescritiva"]
+        UC01["UC-01 Diagnosticar novo evento"]
+        UC02["UC-02 Obter instrucoes de correcao"]
+        UC03["UC-03 Tratar falha nao documentada"]
+        UC04["UC-04 Registrar documento orientativo"]
+        UC05["UC-05 Consultar cobertura documental"]
+        UC06["UC-06 Conversar com assistente"]
+        UC07["UC-07 Carregar historico de eventos"]
+        UC08["UC-08 Treinar motor de diagnostico"]
+        UC09["UC-09 Ingerir telemetria industrial"]
+        UC10["UC-10 Tratar telemetria invalida"]
+        UC11["UC-11 Analisar historico no painel"]
+        UC12["UC-12 Verificar saude do sistema"]
+    end
+
+    tec --- UC01
+    tec --- UC06
+    eng --- UC01
+    eng --- UC04
+    eng --- UC11
+    dat --- UC07
+    dat --- UC08
+    dat --- UC12
+    gw  --- UC09
+    UC09 --- scada
+    UC10 --- scada
+    vx  --- UC02
+    vx  --- UC04
+    vx  --- UC06
+
+    UC01 -.->|include| UC02
+    UC03 -.->|extend| UC02
+    UC09 -.->|include| UC01
+    UC10 -.->|extend| UC09
+    UC06 -.->|include| UC05
+
+    classDef sec fill:#f5f5f1,stroke:#c3c2b7;
+    class UC03,UC10 sec;
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Diagramas de atividade (Capítulo~\ref{cap:atividades})}
+
+\begin{lstlisting}[language=mermaid, caption={AT-01 --- carga do histórico corporativo}, label={lst:mmat01}]
+flowchart TD
+    I(( )) --> A1["Ler o CSV com tipagem de datas"]
+    A1 --> A2["Normalizar os rotulos brutos"]
+    A2 --> A3["Canonicalizar TODOS os rotulos distintos"]
+    A3 --> D1{"Todos casam com alguma regra?"}
+    D1 -->|nao| E1["Levantar excecao nomeando o rotulo"]
+    E1 --> FE((( )))
+    D1 -->|sim| A4["Deduplicar por id e descartar linhas incompletas"]
+    A4 --> A5["Criar as tabelas, se ausentes"]
+    A5 --> A6["Popular fault_families e label_map"]
+    A6 --> A7["Carregar os eventos de forma idempotente"]
+    A7 --> A8["Imprimir o resumo da carga"]
+    A8 --> F((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-02 --- canonicalização de um rótulo bruto}, label={lst:mmat02}]
+flowchart TD
+    I(( )) --> A1["Normalizar: minusculas, sem espacos nas bordas"]
+    A1 --> A2["Tomar a proxima regra da lista ORDENADA"]
+    A2 --> D1{"A expressao casa?"}
+    D1 -->|sim| OK["Devolver a familia da regra"]
+    OK --> F((( )))
+    D1 -->|nao| D2{"Ha mais regras?"}
+    D2 -->|sim| A2
+    D2 -->|nao| ER["Excecao: rotulo exige curadoria humana"]
+    ER --> FE((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-03 --- treino do motor de diagnóstico}, label={lst:mmat03}]
+flowchart TD
+    I(( )) --> A1["Carregar e canonicalizar o dataset"]
+    A1 --> A2["Construir a matriz: 18 brutas + 5 derivadas"]
+    A2 --> FORK[" "]
+    FORK --> V1["Avaliacao 1<br/>holdout por sessao"]
+    FORK --> V2["Avaliacao 2<br/>divisao aleatoria estratificada"]
+    FORK --> V3["Avaliacao 3<br/>sessao, sem temperatura"]
+    V1 --> JOIN[" "]
+    V2 --> JOIN
+    V3 --> JOIN
+    JOIN --> A3["Retreinar com 100% dos dados"]
+    A3 --> A4["Indexar o historico completo no KNN"]
+    A4 --> A5["Gravar 4 artefatos + metrics.json"]
+    A5 --> F((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-04 --- indexação de um documento orientativo}, label={lst:mmat04}]
+flowchart TD
+    I(( )) --> A1["Remover chunks anteriores do mesmo arquivo"]
+    A1 --> A2["Extrair texto por pagina, rastreando a secao"]
+    A2 --> D1{"Algum chunk foi produzido?"}
+    D1 -->|nao: escaneado| OCR["Renderizar a 150 dpi e transcrever por OCR"]
+    OCR --> A3
+    D1 -->|sim| A3["Acumular chunks ~1200 chars, overlap 150"]
+    A3 --> A4["Gerar embeddings (RETRIEVAL_DOCUMENT, dim 768)"]
+    A4 --> D2{"Contagem de vetores = de textos?"}
+    D2 -->|nao| ER["Excecao: desalinhamento silencioso"]
+    ER --> FE((( )))
+    D2 -->|sim| A5["Indexar um conjunto por familia, com metadados"]
+    A5 --> A6["Registrar documento e cobertura no banco"]
+    A6 --> F((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-05 --- diagnóstico de um novo evento}, label={lst:mmat05}]
+flowchart TD
+    I(( )) --> A1["Validar payload contra SensorEvent"]
+    A1 --> D0{"Esquema valido?"}
+    D0 -->|nao| E0["Responder 422 com os campos inconsistentes"]
+    E0 --> F0((( )))
+    D0 -->|sim| A2["Calcular as 5 derivadas e padronizar"]
+    A2 --> A3["Classificar: familia e probabilidade"]
+    A3 --> A4["Recuperar 25 vizinhos e calcular concordancia"]
+    A4 --> A5["Agregar estatisticas historicas da familia"]
+    A5 --> A6["Classificar a confianca (produto dos dois sinais)"]
+    A6 --> D1{"E falha?"}
+    D1 -->|nao: estado| A10
+    D1 -->|sim| A7["Consultar o guardrail de cobertura"]
+    A7 --> D2{"Documentada?"}
+    D2 -->|sim| A8["Recuperar, gerar e citar (AT-06)"]
+    D2 -->|nao| A9["Aviso + sugestao de registro"]
+    A8 --> A11
+    A9 --> A11
+    A10["Persistir auditoria em diagnoses (best-effort)"] --> A11
+    A11["Responder DiagnoseResponse"] --> F((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-06 --- \textit{guardrail} e geração da prescrição}, label={lst:mmat06}]
+flowchart TD
+    I(( )) --> A1["Obter o nome de exibicao da familia"]
+    A1 --> D1{"Existe chunk com esta familia?"}
+    D1 -->|nao| N1["Formatar aviso + sugestao de registro"]
+    N1 --> FE((( )))
+    D1 -->|sim| A2["Montar a consulta: familia + sintomas do evento"]
+    A2 --> A3["Gerar embedding (RETRIEVAL_QUERY)"]
+    A3 --> A4["Recuperar top-k=6 filtrando pela familia"]
+    A4 --> A5["Montar prompt de contexto fechado, trechos numerados"]
+    A5 --> A6["Gerar com temperature=0.2 e instrucao restritiva"]
+    A6 --> A7["Extrair citacoes dos METADADOS dos trechos"]
+    A7 --> F((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-07 --- conversa com o agente}, label={lst:mmat07}]
+flowchart TD
+    I(( )) --> D0{"Agente disponivel?"}
+    D0 -->|nao| FB["Degradar para RAG de um passo"]
+    FB --> A5
+    D0 -->|sim| A1["Reiniciar o coletor de citacoes"]
+    A1 --> A2["Recuperar a memoria da sessao (schema adk)"]
+    A2 --> A3["Modelo decide a proxima ferramenta"]
+    A3 --> D1{"Qual ferramenta?"}
+    D1 --> T1["consultar_historico"]
+    D1 --> T2["buscar_documentos (aplica o guardrail)"]
+    D1 --> T3["diagnosticar_evento"]
+    D1 --> T4["cobertura_documental"]
+    T1 --> D2
+    T2 --> D2
+    T3 --> D2
+    T4 --> D2{"Precisa de outra ferramenta?"}
+    D2 -->|sim| A3
+    D2 -->|nao| A4["Gerar a resposta final em contexto fechado"]
+    A4 --> A5["Devolver texto + citacoes + selo do modo"]
+    A5 --> F((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-08 --- ingestão de telemetria industrial}, label={lst:mmat08}]
+flowchart TD
+    I(( )) --> P1["Gateway publica em sensors/{maq}/telemetry (QoS 1)"]
+    P1 --> W1["Worker extrai o identificador da maquina do topico"]
+    W1 --> D1{"JSON e esquema validos?"}
+    D1 -->|nao| DLQ["Compor registro de rejeicao: motivo + payload"]
+    DLQ --> B2["Publicar em .../dlq (QoS 1)"]
+    B2 --> F1((( )))
+    D1 -->|sim| W2["Canonicalizar a anotacao, se houver"]
+    W2 --> W3["merge idempotente em events"]
+    W3 --> W4["Chamar POST /diagnose"]
+    W4 --> D2{"E falha?"}
+    D2 -->|sim| B1["Publicar em .../alerts (QoS 1)"]
+    B1 --> F2((( )))
+    D2 -->|nao| F3((( )))
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-09 e AT-10 --- cadastro de documento e indexação automática}, label={lst:mmat0910}]
+flowchart TD
+    subgraph AT09["AT-09 — cadastro pela interface"]
+        I1(( )) --> C1["Usuario abre a secao Documentos"]
+        C1 --> C2["Interface lista documentos e cobertura"]
+        C2 --> C3["Usuario anexa PDF, titulo e familias"]
+        C3 --> CD1{"Campos preenchidos?"}
+        CD1 -->|nao| CE1["Erro no formulario"] --> C3
+        CD1 -->|sim| C4["POST /documents (multipart)"]
+        C4 --> CD2{"Indexacao bem-sucedida?"}
+        CD2 -->|nao| CE2["Exibir codigo e detalhe do erro"]
+        CD2 -->|sim| C5["Exibir chunks e familias atendidas"]
+        C5 --> C6["Invalidar o cache da interface"]
+        C6 --> C7["Familia coberta na proxima requisicao"] --> F1((( )))
+    end
+
+    subgraph AT10["AT-10 — indexacao automatica no primeiro boot"]
+        I2(( )) --> BD0{"RAG_BOOTSTRAP habilitado?"}
+        BD0 -->|nao| BN0["Nao fazer nada"] --> F2((( )))
+        BD0 -->|sim| BD1{"Indice ja contem familias?"}
+        BD1 -->|sim| BN1["Log: bootstrap dispensado"] --> F2
+        BD1 -->|nao| BD2{"Indice inspecionavel?"}
+        BD2 -->|nao| BN2["Advertir e cancelar"] --> F2
+        BD2 -->|sim| B1["Iniciar thread daemon separada"]
+        B1 --> B2["Startup conclui: healthcheck passa"]
+        B1 --> B3["Indexar cada PDF da cobertura inicial (AT-04)"]
+        B3 --> B4["Registrar chunks por documento"] --> F3((( )))
+    end
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-11, AT-12 e AT-13 --- painel, integração contínua e implantação}, label={lst:mmat111213}]
+flowchart TD
+    subgraph AT11["AT-11 — consulta a um painel"]
+        I1(( )) --> P1["Usuario escolhe secao e subpainel"]
+        P1 --> PD0{"API acessivel?"}
+        PD0 -->|nao| PE0["Interromper com o endereco configurado"] --> F1((( )))
+        PD0 -->|sim| P2["Requisitar APENAS os dados do painel ativo"]
+        P2 --> PD1{"Agregacao disponivel?"}
+        PD1 -->|nao| PE1["Aviso no painel; demais graficos seguem"] --> P3
+        PD1 -->|sim| P3["Aplicar filtros locais"]
+        P3 --> P4["Aplicar a paleta validada e o chrome comum"]
+        P4 --> P5["Renderizar com legenda explicativa"] --> F2((( )))
+    end
+
+    subgraph AT12["AT-12 — integracao continua"]
+        I2(( )) --> C1["push em main ou pull request"]
+        C1 --> C2["Lint: ruff check + format --check"]
+        C2 --> CD1{"Passou?"}
+        CD1 -->|nao| CE["Interromper e reportar no PR"] --> F3((( )))
+        CD1 -->|sim| C3["Testes: 63, Postgres de servico, LLM fake"]
+        C3 --> CD2{"Passou?"}
+        CD2 -->|nao| CE
+        CD2 -->|sim| C4["Build: docker build da imagem unica"]
+        C4 --> CD3{"Passou?"}
+        CD3 -->|nao| CE
+        CD3 -->|sim| C5["Publicacao autorizada"] --> F4((( )))
+    end
+
+    subgraph AT13["AT-13 — provisionamento e implantacao"]
+        I3(( )) --> D1["Instalar SDK de IaC e autenticar"]
+        D1 --> D2["Inicializar o projeto"]
+        D2 --> D3["Planejar: revisar o diff da topologia"]
+        D3 --> DD1{"Diff aceitavel?"}
+        DD1 -->|nao| DE1["Ajustar a declaracao"] --> D3
+        DD1 -->|sim| D4["Aplicar: banco, servicos, volume, grupos"]
+        D4 --> D5["Definir segredos por entrada padrao"]
+        D5 --> D6["Expor dominios HTTPS e proxy TCP"]
+        D6 --> D7["Carregar o historico da maquina local"]
+        D7 --> D8["Aguardar a indexacao automatica (AT-10)"]
+        D8 --> DD2{"Verificacao pos-implantacao passou?"}
+        DD2 -->|nao| DE2["Inspecionar logs e variaveis efetivas"] --> D8
+        DD2 -->|sim| D9["Sistema operacional em nuvem"] --> F5((( )))
+    end
+\end{lstlisting}
+
+\begin{lstlisting}[language=mermaid, caption={AT-14 --- ciclo de tratamento de lacuna documental}, label={lst:mmat14}]
+flowchart TD
+    I(( )) --> P1["Planta: vibracao anomala detectada"]
+    P1 --> S1["Sistema: familia prevista + ocorrencias semelhantes"]
+    S1 --> D1{"Documentada?"}
+    D1 -->|sim| S2["Prescricao com citacao de doc, secao e pagina"]
+    S2 --> T1["Tecnico executa o procedimento"]
+    T1 --> T2["Tecnico registra conclusao e valida critérios"]
+    T2 --> F1((( )))
+    D1 -->|nao| S3["Aviso + sugestao de registro"]
+    S3 --> E1["Engenheiro prioriza a lacuna no painel"]
+    E1 --> E2["Engenheiro redige o procedimento tecnico"]
+    E2 --> E3["Engenheiro cadastra o PDF (AT-09)"]
+    E3 --> E4["Familia passa a ser coberta"]
+    E4 -->|o proximo diagnostico ja prescreve| S1
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Infraestrutura (Figuras~\ref{fig:infralocal} e~\ref{fig:infranuvem})}
+
+\begin{lstlisting}[language=mermaid, caption={Implantação local e em nuvem}, label={lst:mminfra}]
+flowchart TB
+    subgraph LOCAL["Estacao de trabalho — docker compose"]
+        LUI["ui :8501<br/>Streamlit"] --> LAPI["api :8000<br/>Uvicorn"]
+        LWK["worker<br/>paho-mqtt"] --> LAPI
+        LMQ["mosquitto :1883"] --> LWK
+        LAPI --> LPG[("postgres :5432")]
+        LWK --> LPG
+        LAPI --> LVOL[("./data/chroma")]
+        LAPI --> LART["./artifacts"]
+        LPG --> LPGD[("volume pgdata")]
+    end
+
+    subgraph CLOUD["Projeto em nuvem — regiao us-east4"]
+        CUI["ui<br/>HTTPS publico"] -->|rede privada| CAPI["api<br/>HTTPS publico"]
+        CWK["worker<br/>sem exposicao"] -->|rede privada| CAPI
+        CMQ["mosquitto<br/>proxy TCP :1883"] -->|rede privada| CWK
+        CAPI -->|rede privada| CPG[("postgres<br/>plugin gerenciado")]
+        CWK -->|rede privada| CPG
+        CAPI --> CVOL[("volume chroma<br/>1 GB, /app/data/chroma")]
+    end
+
+    NET(("Internet")) -->|HTTPS| CUI
+    NET -->|HTTPS| CAPI
+    NET -->|TCP| CMQ
+    CAPI -->|egresso HTTPS| VX["Vertex AI — Gemini"]
+    GH["Repositorio Git<br/>push em main"] -.->|build apos CI| CUI
+    GH -.->|build apos CI| CAPI
+    GH -.->|build apos CI| CWK
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Agente e ferramentas (Figura~\ref{fig:agente})}
+
+\begin{lstlisting}[language=mermaid, caption={Agente de conversa e suas quatro ferramentas}, label={lst:mmagente}]
+flowchart LR
+    UI["Streamlit Chat<br/>(session_id por aba)"] --> EP["POST /api/v1/chat"]
+    EP -->|ADK disponivel| AG["LlmAgent (gemini-3.6-flash)<br/>Runner + sessoes no Postgres"]
+    EP -->|fallback automatico| RAGQ["RAG de um passo<br/>(rag_service.chat)"]
+    AG --> T1["consultar_historico<br/>(SQL no Postgres)"]
+    AG --> T2["buscar_documentos<br/>(guardrail + ChromaDB)"]
+    AG --> T3["diagnosticar_evento<br/>(DiagnosisEngine)"]
+    AG --> T4["cobertura_documental"]
+    classDef guard fill:#fdede7,stroke:#eb6834;
+    class T2 guard;
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\section{Integração contínua (Figura~\ref{fig:at12})}
+
+\begin{lstlisting}[language=mermaid, caption={Fluxo de integração contínua, forma compacta}, label={lst:mmci}]
+flowchart LR
+    PUSH["push / PR"] --> LINT["ruff check + format"]
+    LINT --> TEST["pytest — 63 testes<br/>(Postgres de servico,<br/>LLM/embeddings mockados)"]
+    TEST --> BUILD["docker build"]
+    BUILD --> DEPLOY["publicacao autorizada"]
+\end{lstlisting}

@@ -1,0 +1,253 @@
+% ===========================================================================
+%  2 — Definicoes
+% ===========================================================================
+\chapter{Definições}
+\label{cap:definicoes}
+
+Este capítulo fixa o vocabulário do documento. A precisão aqui não é
+formalidade: vários termos --- \enquote{família}, \enquote{sessão},
+\enquote{documentado} --- têm significado técnico específico neste sistema, e
+confundi-los altera a interpretação dos resultados apresentados nos
+Capítulos~\ref{cap:ml} e~\ref{cap:rag}.
+
+\section{Domínio: manutenção industrial}
+
+\begin{description}
+  \item[Manutenção corretiva] Intervenção realizada após a ocorrência da
+    falha, para restabelecer a função do item~\cite{abnt5462}.
+
+  \item[Manutenção preventiva] Intervenção realizada em intervalos
+    predeterminados ou segundo critérios prescritos, com o objetivo de reduzir a
+    probabilidade de falha, independentemente da condição
+    observada~\cite{abnt5462}.
+
+  \item[Manutenção preditiva / baseada em condição (CBM)] Intervenção
+    determinada pelo acompanhamento de parâmetros da condição real do
+    equipamento --- vibração, temperatura, análise de óleo --- com estimativa do
+    instante provável da falha~\cite{iso17359, jardine2006review}.
+
+  \item[Manutenção prescritiva] Extensão da preditiva que, além de detectar e
+    prognosticar, recomenda a ação corretiva específica, ordenada e
+    fundamentada, integrando conhecimento documental e histórico
+    operacional~\cite{ansari2019prima}. É o alvo deste projeto.
+
+  \item[Ativo rotativo] Equipamento cujo princípio de funcionamento envolve
+    rotação de eixo --- motor elétrico, bomba, ventilador, redutor. Concentra as
+    falhas tratadas neste sistema.
+
+  \item[Bancada de ensaio] Conjunto experimental no qual falhas são
+    \textbf{induzidas} de forma controlada para gerar dados rotulados. O
+    conjunto de dados deste projeto vem de uma bancada, o que tem consequências
+    metodológicas discutidas na Seção~\ref{sec:vazamento}.
+\end{description}
+
+\section{Domínio: análise de vibração}
+
+\begin{description}
+  \item[Velocidade RMS ($v_{\text{RMS}}$)] Valor eficaz da velocidade de
+    vibração, em \si{\milli\meter\per\second}. É o indicador normativo de
+    severidade global para máquinas rotativas na faixa de
+    \SIrange{10}{1000}{\hertz}~\cite{iso10816, iso20816}.
+
+  \item[Aceleração de pico] Maior valor absoluto de aceleração na janela de
+    medição, em $g$. Sensível a impactos, típicos de defeitos localizados em
+    rolamentos.
+
+  \item[Curtose ($\kappa$)] Momento estatístico de quarta ordem normalizado.
+    Um sinal gaussiano tem $\kappa \approx 3$; valores superiores indicam
+    presença de impulsos. Em teoria, é um dos melhores indicadores precoces de
+    defeito de rolamento~\cite{randall2011tutorial}; neste conjunto de dados,
+    não discrimina (Seção~\ref{sec:assinaturas}).
+
+  \item[Fator de crista ($C_f$)] Razão entre aceleração de pico e aceleração
+    RMS. Cresce no início de um defeito localizado e volta a cair quando o
+    defeito se generaliza.
+
+  \item[Ordem de rotação] Frequência expressa como múltiplo da frequência de
+    rotação do eixo: $\text{ordem} = f / f_{\text{rot}}$, com
+    $f_{\text{rot}} = \text{RPM}/60$. Os manuais de manutenção descrevem
+    assinaturas em ordens (1$\times$, 2$\times$), não em \si{\hertz} absoluto ---
+    razão pela qual a conversão para ordem é uma das \textit{features} derivadas
+    do modelo (Seção~\ref{sec:features}).
+
+  \item[BPFO, BPFI, BSF] Frequências características de defeito em rolamentos
+    --- pista externa, pista interna e elemento rolante, respectivamente.
+    São múltiplos não inteiros da rotação, determinados pela geometria do
+    rolamento~\cite{randall2011tutorial}. Sua detecção exige o espectro
+    completo, ausente deste conjunto de dados.
+
+  \item[Zonas ISO A/B/C/D] Faixas de severidade da velocidade RMS definidas
+    pela norma~\cite{iso10816}: A (máquina recém-comissionada), B (operação
+    contínua aceitável), C (insatisfatória --- planejar intervenção) e D
+    (inaceitável --- risco de dano). Os limites dependem da classe da máquina
+    (I a IV), que é função da potência e da rigidez da fundação.
+
+  \item[Severidade relativa] Razão entre a velocidade RMS medida e a linha de
+    base da própria máquina no mesmo regime de rotação. É a leitura mais
+    defensável em uma bancada com falhas induzidas, onde a zona absoluta perde
+    significado (Seção~\ref{sec:severidade}).
+\end{description}
+
+\section{Domínio: dados deste projeto}
+
+\begin{description}
+  \item[Evento] Registro único de telemetria: 18 grandezas de sensor,
+    identificador, instante de criação e, opcionalmente, a anotação de falha do
+    operador. É a unidade atômica de dado do sistema, definida uma única vez em
+    \cd{SensorEvent} (\arq{src/core/schemas.py}).
+
+  \item[Rótulo bruto (\cd{raw\_fault})] Texto da coluna \cd{fault} do conjunto
+    de dados original, tal como digitado. Contém \num{151} valores distintos,
+    incluindo erros de digitação reais (\cd{ddesbalanceado},
+    \cd{cockecocked\_adxl\_0}, \cd{mortor\_desligado}) e sufixos de variação
+    experimental (\cd{\_2}, \cd{\_carga}, \cd{\_pos\_2}, \cd{new\_}).
+
+  \item[Família canônica] Classe de falha ou estado operacional obtida pela
+    canonicalização auditável dos rótulos brutos. São \textbf{17 famílias}: 12
+    de falha e 5 de estado. É a única taxonomia usada pelo modelo, pela API e
+    pela base documental (Apêndice~\ref{ap:taxonomia}).
+
+  \item[Sessão / campanha de coleta] Conjunto de leituras registradas sob a
+    mesma configuração experimental. Neste conjunto de dados, o \emph{rótulo
+    bruto identifica a sessão}: \cd{rolamento\_inner},
+    \cd{rolamento\_inner\_2} e \cd{new\_rolamento\_inner\_0} são a mesma família
+    coletada em três campanhas distintas. Essa coincidência entre sessão e
+    rótulo é a causa-raiz do vazamento analisado na
+    Seção~\ref{sec:vazamento}.
+
+  \item[Estado operacional] Família cujo \cd{is\_fault} é falso ---
+    \cd{normal}, \cd{baseline}, \cd{teste}, \cd{acelerando},
+    \cd{motor\_desligado}. Um diagnóstico que aponta estado operacional não
+    aciona prescrição alguma.
+
+  \item[Linha de base] Distribuição da velocidade RMS no estado \cd{normal}
+    para um regime de rotação específico. Serve de referência para a severidade
+    relativa.
+\end{description}
+
+\section{Domínio: aprendizado de máquina}
+
+\begin{description}
+  \item[\textit{Feature}] Variável de entrada do modelo. O sistema usa 23:
+    18 grandezas brutas de sensor e 5 derivadas fisicamente motivadas
+    (Seção~\ref{sec:features}).
+
+  \item[Padronização (\textit{StandardScaler})] Transformação
+    $z = (x - \mu)/\sigma$ aplicada a cada \textit{feature}. É obrigatória para
+    o KNN, cuja distância euclidiana seria dominada pelas grandezas de maior
+    magnitude --- neste caso, a rotação, na ordem de \num{1000}.
+
+  \item[KNN] Algoritmo que responde a uma consulta devolvendo os $k$ registros
+    mais próximos no espaço de \textit{features}~\cite{cover1967nearest}. Neste
+    sistema, $k = 25$ e o índice cobre o histórico completo. É o componente que
+    atende literalmente o requisito de \enquote{ocorrências históricas
+    semelhantes}.
+
+  \item[LightGBM] Implementação de \textit{gradient boosting} sobre árvores de
+    decisão, com amostragem por gradiente unilateral e agrupamento de
+    \textit{features} exclusivas~\cite{ke2017lightgbm}. Fornece a classe prevista
+    e sua probabilidade.
+
+  \item[Concordância dos vizinhos] Fração dos $k$ vizinhos recuperados que
+    pertencem à família prevista pelo classificador. É uma segunda evidência,
+    independente da probabilidade, sobre a confiabilidade do diagnóstico.
+
+  \item[\textit{Holdout} por sessão] Protocolo de validação em que sessões
+    inteiras de coleta são separadas para teste, nunca leituras individuais.
+    Mede a pergunta de produção --- \enquote{o modelo reconhece a falha em uma
+    campanha nova?} --- e é a prática recomendada para dados com estrutura de
+    agrupamento~\cite{roberts2017crossvalidation}.
+
+  \item[Vazamento de dados (\textit{data leakage})] Situação em que informação
+    indisponível no momento da predição real influencia o treino, inflando
+    artificialmente a métrica~\cite{kaufman2012leakage, kapoor2023leakage}.
+    Neste projeto, o vazamento é de \emph{grupo}: a identidade da campanha de
+    coleta está impressa em quase todo o vetor de \textit{features}.
+
+  \item[F1 macro] Média não ponderada do F1 de cada classe. Trata todas as
+    classes como igualmente importantes, o que é adequado em conjuntos
+    desbalanceados~\cite{sokolova2009systematic}.
+\end{description}
+
+\section{Domínio: recuperação e geração}
+
+\begin{description}
+  \item[\textit{Embedding}] Representação vetorial densa de um texto, na qual
+    proximidade geométrica aproxima similaridade semântica. Este sistema usa
+    \cd{gemini-embedding-2} com dimensionalidade 768.
+
+  \item[\textit{Chunk}] Fragmento de documento indexado individualmente
+    (aproximadamente \num{1200} caracteres, com sobreposição de 150). Carrega os
+    metadados de rastreio --- documento, seção, página, família --- que se
+    tornam as citações exibidas ao usuário.
+
+  \item[Base vetorial] Banco especializado em busca por similaridade. Aqui,
+    ChromaDB em modo persistente, com índice HNSW~\cite{malkov2020hnsw} e
+    métrica de cosseno.
+
+  \item[RAG (\textit{Retrieval-Augmented Generation})] Padrão em que o modelo
+    de linguagem recebe, no \textit{prompt}, trechos recuperados de uma base
+    externa e responde restrito a eles~\cite{lewis2020rag}. Substitui
+    conhecimento paramétrico por conhecimento verificável.
+
+  \item[Contexto fechado] Regime de \textit{prompting} no qual o modelo é
+    instruído a responder \textbf{exclusivamente} com base nos trechos
+    fornecidos e a declarar explicitamente quando eles não cobrem a pergunta.
+
+  \item[\textit{Guardrail} de cobertura] Verificação determinística, anterior a
+    qualquer chamada ao modelo, de que a família de falha possui \textit{chunks}
+    indexados. Se não possui, o modelo não é invocado: o sistema devolve o aviso
+    de \enquote{não documentado} e a sugestão de registro. É a implementação do
+    requisito \req{RF-04}.
+
+  \item[Citação determinística] Referência a documento, seção e página obtida
+    dos \emph{metadados} do trecho recuperado, e não do texto gerado pelo
+    modelo. Torna a citação alucinada estruturalmente impossível.
+
+  \item[Alucinação] Geração de conteúdo fluente e plausível, mas não sustentado
+    pela fonte~\cite{ji2023hallucination}. O Capítulo~\ref{cap:rag} descreve as
+    cinco barreiras adotadas contra ela.
+
+  \item[Agente] Modelo de linguagem com autonomia para escolher e invocar
+    ferramentas em vários passos até responder. Neste sistema, restringe-se ao
+    \textit{endpoint} de conversa; o caminho crítico de diagnóstico permanece
+    determinístico (\adrr{ADR-11}).
+
+  \item[Ferramenta (\textit{tool})] Função Python exposta ao agente, com
+    assinatura e \textit{docstring} que servem de contrato. São quatro:
+    consulta ao histórico, busca documental, diagnóstico e cobertura documental.
+\end{description}
+
+\section{Domínio: arquitetura e infraestrutura}
+
+\begin{description}
+  \item[Modelo C4] Notação de visualização arquitetural em quatro níveis de
+    zoom --- Contexto, Contêiner, Componente e Código ---
+    proposta por Simon Brown~\cite{brown2026c4}.
+
+  \item[ADR (\textit{Architecture Decision Record})] Registro curto e imutável
+    de uma decisão arquitetural, contendo contexto, decisão, consequências e
+    alternativas rejeitadas~\cite{nygard2011adr}.
+
+  \item[Contêiner (C4)] Unidade executável ou de armazenamento que hospeda
+    código --- neste sistema: API, interface, \textit{worker}, \textit{broker},
+    banco relacional e base vetorial. Não confundir com contêiner Docker, ainda
+    que aqui coincidam.
+
+  \item[Infraestrutura como código (IaC)] Declaração da topologia de nuvem em
+    arquivo versionado, aplicada por ferramenta. Aqui,
+    \arq{.railway/railway.ts}, que é a fonte de verdade da infraestrutura.
+
+  \item[DLQ (\textit{Dead-Letter Queue})] Destino das mensagens que não podem
+    ser processadas, acompanhadas do motivo da rejeição. Garante que nenhum
+    dado inválido seja descartado em silêncio.
+
+  \item[QoS 1 (MQTT)] Nível de garantia \textit{at-least-once}: a mensagem é
+    entregue ao menos uma vez, podendo ser duplicada~\cite{oasis2019mqtt}. Exige
+    idempotência no consumidor --- implementada por \cd{session.merge} sobre a
+    chave primária do evento.
+
+  \item[Volume persistente] Armazenamento cujo conteúdo sobrevive à
+    substituição do contêiner. Necessário para o índice vetorial, que de outro
+    modo seria perdido a cada implantação.
+\end{description}

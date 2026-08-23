@@ -1,0 +1,130 @@
+% ===========================================================================
+%  Apendice E — Configuracao
+% ===========================================================================
+\chapter{Configuração e variáveis de ambiente}
+\label{ap:config}
+
+Toda a configuração vem de variáveis de ambiente com valores padrão sensatos,
+conforme o padrão de doze fatores~\cite{wiggins2017twelvefactor}. Não existe
+configuração em código, nem arquivo de configuração específico por ambiente.
+
+\section{Variáveis de ambiente}
+
+\begin{tabularx}{\linewidth}{@{}L{44mm}L{34mm}X@{}}
+\toprule
+\headrow \thd{Variável} & \thd{Valor padrão} & \thd{Função}\\
+\midrule
+\endhead
+\multicolumn{3}{@{}l}{\textbf{Banco de dados}}\\
+\cd{DATABASE\_URL} & \cd{postgresql+psycopg2:} \cd{//fiesc:fiesc@} \cd{localhost:5432/fiesc} &
+  URL de conexão. Aceita também os formatos \cd{postgresql://} e
+  \cd{postgres://} entregues por provedores gerenciados --- a normalização é
+  automática.\\
+\midrule
+\zebra \multicolumn{3}{@{}l}{\textbf{Serviço de linguagem}}\\
+\cd{GOOGLE\_CLOUD\_PROJECT} & (vazio) & Projeto de nuvem. Vazio desabilita o
+  agente e o serviço de linguagem, sem impedir o restante do sistema.\\
+\zebra \cd{GOOGLE\_CLOUD\_LOCATION} & \cd{global} & Endpoint regional. Os modelos
+  usados são servidos pelo endpoint global; regiões específicas retornam erro de
+  modelo inexistente.\\
+\cd{GOOGLE\_APPLICATION\_} \cd{CREDENTIALS} & (vazio) & Caminho do arquivo de
+  credencial --- uso em desenvolvimento local.\\
+\zebra \cd{GOOGLE\_CREDENTIALS\_B64} & (vazio) & Mesma credencial em base64 ---
+  uso em implantação. Materializada em arquivo temporário com permissão
+  \cd{0600}.\\
+\cd{GEMINI\_CHAT\_MODEL} & \cd{gemini-3.6-flash} & Modelo de geração. É
+  parâmetro: trocar de modelo não exige alterar código.\\
+\zebra \cd{GEMINI\_EMBEDDING\_MODEL} & \cd{gemini-embedding-2} & Modelo de
+  \textit{embeddings}.\\
+\cd{EMBEDDING\_DIM} & \cd{768} & Dimensionalidade do vetor. \textbf{Alterar
+  exige reindexar a base documental} --- vetores de dimensões distintas não são
+  comparáveis.\\
+\midrule
+\zebra \multicolumn{3}{@{}l}{\textbf{Recuperação documental}}\\
+\cd{CHROMA\_DIR} & \cd{./data/chroma} & Diretório do índice vetorial. Em nuvem,
+  aponta para o volume persistente.\\
+\zebra \cd{RAG\_TOP\_K} & \cd{6} & Número de trechos recuperados por consulta.\\
+\cd{RAG\_BOOTSTRAP} & \cd{false} & Habilita a indexação automática quando o
+  índice está vazio. Verdadeiro em nuvem, falso em desenvolvimento.\\
+\zebra \cd{DOCS\_DIR} & \cd{./documentos} & Diretório dos PDFs da carga inicial.\\
+\midrule
+\multicolumn{3}{@{}l}{\textbf{Ingestão industrial}}\\
+\zebra \cd{MQTT\_HOST} & \cd{localhost} & Endereço do \textit{broker}. Em nuvem,
+  o domínio privado do serviço.\\
+\cd{MQTT\_PORT} & \cd{1883} & Porta do \textit{broker}.\\
+\zebra \cd{MQTT\_TELEMETRY\_TOPIC} & \cd{sensors/+/telemetry} & Tópico assinado
+  pelo \textit{worker}, com curinga de máquina.\\
+\cd{MQTT\_USERNAME} & (vazio) & Usuário do \textit{broker}. Vazio implica acesso
+  anônimo --- aceitável apenas sem exposição pública.\\
+\zebra \cd{MQTT\_PASSWORD} & (vazio) & Senha do \textit{broker}.\\
+\midrule
+\multicolumn{3}{@{}l}{\textbf{Serviços}}\\
+\zebra \cd{API\_URL} & \cd{http://localhost:8000} & Endereço da API usado pela
+  interface e pelo \textit{worker}. Em nuvem, o domínio \emph{privado}.\\
+\cd{ARTIFACTS\_DIR} & \cd{./artifacts} & Diretório dos artefatos de
+  aprendizado de máquina.\\
+\bottomrule
+\end{tabularx}
+
+\section{Constantes de código}
+
+Estas não são configuráveis por ambiente --- alterá-las é decisão de projeto que
+exige retreino ou reindexação.
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}L{16mm}L{34mm}X@{}}
+\toprule
+\headrow \thd{Constante} & \thd{Valor} & \thd{Onde} & \thd{Consequência de
+  alterar}\\
+\midrule
+\cd{KNN\_NEIGHBORS} & 25 & \arq{ml/train.py} & Exige retreino; altera a
+  granularidade da concordância.\\
+\zebra \cd{SESSION\_TEST\_FRACTION} & 0,2 & \arq{ml/train.py} & Altera o
+  protocolo principal de avaliação.\\
+\cd{RANDOM\_STATE} & 42 & \arq{ml/train.py} & Quebra a reprodutibilidade das
+  métricas publicadas.\\
+\zebra \cd{CHUNK\_SIZE} & 1200 & \arq{rag/chunking.py} & Exige reindexação de
+  toda a base documental.\\
+\cd{CHUNK\_OVERLAP} & 150 & \arq{rag/chunking.py} & Idem.\\
+\zebra \cd{MIN\_SESSION\_EVENTS} & 30 & \arq{api/analytics.py} & Altera quais
+  campanhas entram nas análises de assinatura e de vazamento.\\
+\cd{COLLECTION} & \cd{manuals} & \arq{rag/store.py} & Índice existente ficaria
+  inacessível.\\
+\bottomrule
+\end{tabularx}
+
+\section{Arquivo de configuração local}
+
+\begin{lstlisting}[language=bash, caption={\arq{.env} de desenvolvimento}, label={lst:env}]
+# --- Banco de dados (docker compose sobe o Postgres com estes valores) ---
+DATABASE_URL=postgresql+psycopg2://fiesc:fiesc@localhost:5432/fiesc
+
+# --- Servico de linguagem ---
+# Autenticacao: `gcloud auth application-default login` OU aponte
+# GOOGLE_APPLICATION_CREDENTIALS para o JSON da service account.
+GOOGLE_CLOUD_PROJECT=meu-projeto-gcp
+GOOGLE_CLOUD_LOCATION=global
+# GOOGLE_APPLICATION_CREDENTIALS=./credentials/service-account.json
+GEMINI_CHAT_MODEL=gemini-3.6-flash
+GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+EMBEDDING_DIM=768
+
+# --- Recuperacao documental ---
+CHROMA_DIR=./data/chroma
+RAG_TOP_K=6
+
+# --- Ingestao industrial ---
+MQTT_HOST=localhost
+MQTT_PORT=1883
+MQTT_TELEMETRY_TOPIC=sensors/+/telemetry
+
+# --- Servicos ---
+API_URL=http://localhost:8000
+ARTIFACTS_DIR=./artifacts
+\end{lstlisting}
+
+\begin{atencao}
+O arquivo \arq{.env} \textbf{não é versionado}. O repositório traz apenas
+\arq{.env.example}, com valores de exemplo e sem segredo algum. A credencial de
+nuvem, quando usada como arquivo, fica em diretório ignorado pelo controle de
+versão.
+\end{atencao}

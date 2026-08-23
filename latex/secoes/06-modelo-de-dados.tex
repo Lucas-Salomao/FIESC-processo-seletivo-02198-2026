@@ -1,0 +1,347 @@
+% ===========================================================================
+%  6 — Modelo de dados
+% ===========================================================================
+\chapter{Modelo de dados}
+\label{cap:modelodados}
+
+O sistema mantém dados em três repositórios de naturezas distintas: o banco
+relacional (histórico, taxonomia e auditoria), a base vetorial (\textit{chunks}
+documentais) e o sistema de arquivos (artefatos de aprendizado de máquina).
+Este capítulo especifica os três, com ênfase no relacional, que é onde vive o
+modelo de domínio.
+
+\section{Diagrama entidade-relacionamento}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \node[entidade, text width=42mm] (ff) at (8.0,0)
+    {\etitulo{fault\_families}\nodepart{two}
+     \pk{id} \cd{integer PK}\\
+     \cd{name varchar(64) UNIQUE}\\
+     \cd{is\_fault boolean}};
+
+  \node[entidade, text width=38mm] (lm) at (2.2,-5.0)
+    {\etitulo{label\_map}\nodepart{two}
+     \pk{raw\_label} \cd{varchar(128) PK}\\
+     \fk{family\_id} \cd{integer FK}};
+
+  \node[entidade, text width=48mm] (ev) at (8.0,-5.6)
+    {\etitulo{events}\nodepart{two}
+     \pk{id} \cd{bigint PK} (sem \textit{autoincrement})\\
+     \cd{created\_at timestamptz IDX}\\
+     \cd{raw\_fault varchar(128) NULL}\\
+     \fk{family\_id} \cd{integer FK NULL IDX}\\
+     \cd{z\_rms\_velocity\_mm\_s double}\\
+     \cd{x\_rms\_velocity\_mm\_s double}\\
+     \cd{temperature\_c double}\\
+     \cd{\ldots 15 demais grandezas double}\\
+     \cd{rpm double}};
+
+  \node[entidade, text width=38mm] (dc) at (13.8,-5.0)
+    {\etitulo{doc\_coverage}\nodepart{two}
+     \pk{family\_id} \cd{integer PK/FK}\\
+     \pk{document\_id} \cd{integer PK/FK}};
+
+  \node[entidade, text width=42mm] (dg) at (5.2,-11.8)
+    {\etitulo{diagnoses}\nodepart{two}
+     \pk{id} \cd{bigint PK AUTO}\\
+     \cd{event\_id bigint NULL}\\
+     \fk{predicted\_family\_id} \cd{int FK}\\
+     \cd{probability double}\\
+     \cd{neighbors json}\\
+     \cd{llm\_response json NULL}\\
+     \cd{created\_at timestamptz}};
+
+  \node[entidade, text width=40mm] (dc2) at (13.2,-11.8)
+    {\etitulo{documents}\nodepart{two}
+     \pk{id} \cd{integer PK AUTO}\\
+     \cd{filename varchar(256)}\\
+     \cd{title varchar(256)}\\
+     \cd{ingested\_at timestamptz}\\
+     \cd{status varchar(32)}};
+
+  % --- relacionamentos
+  \draw[erel] (ff.west) -- (2.2,-1.6) -- (lm.north)
+    node[ercard, pos=0.22, above=1pt]{1}
+    node[ercard, pos=0.92, right=2pt]{N};
+  \draw[erel] (ff.south) -- (ev.north)
+    node[ercard, pos=0.10, right=2pt]{1}
+    node[ercard, pos=0.90, right=2pt]{N};
+  \draw[erel] (ff.east) -- (13.8,-1.6) -- (dc.north)
+    node[ercard, pos=0.22, above=1pt]{1}
+    node[ercard, pos=0.92, right=2pt]{N};
+  \draw[erel] (dc2.north) -- (dc.south)
+    node[ercard, pos=0.10, right=2pt]{1}
+    node[ercard, pos=0.90, right=2pt]{N};
+  \draw[erel] (ev.south west) -- (5.2,-9.5)
+    node[ercard, pos=0.75, right=2pt]{N};
+  \node[ercard] at (6.1,-8.2) {1};
+
+  \node[actnote, text width=118mm, anchor=north west] at (1.4,-15.9)
+    {\textbf{Relação lógica sem chave estrangeira:} \cd{diagnoses.event\_id} não
+     referencia \cd{events} por chave estrangeira, porque um diagnóstico pode ser
+     emitido para um evento \emph{ad hoc} --- submetido pela interface e nunca
+     persistido no histórico.};
+  \draw[actnoteline] (5.2,-15.9) -- (5.2,-13.6);
+
+\end{tikzpicture}}
+\caption[Modelo entidade-relacionamento]{Modelo entidade-relacionamento do
+  banco corporativo. \cd{fault\_families} é a entidade central: ela ancora a
+  taxonomia, os eventos, a cobertura documental e a auditoria de diagnósticos.
+  A ausência deliberada de uma chave estrangeira entre \cd{diagnoses} e
+  \cd{events} está justificada na nota.}
+\label{fig:er}
+\end{figure}
+
+\begin{decisao}
+A chave primária de \cd{events} é o identificador \textbf{de origem} do evento,
+sem geração automática. Essa escolha é o que torna a ingestão MQTT idempotente:
+com entrega \textit{at-least-once}, a mesma mensagem pode chegar duas vezes, e
+um \cd{merge} pela chave primária resolve o problema na origem, sem tabela de
+deduplicação nem janela de tempo (\req{RNF-07}).
+\end{decisao}
+
+\section{Dicionário de dados}
+
+\subsection{Tabela \cd{fault\_families}}
+
+Taxonomia canônica de falhas e estados operacionais. É a fonte de verdade da
+classificação em todo o sistema --- modelo, API, base documental e interface
+usam exatamente estes nomes.
+
+\begin{tabularx}{\linewidth}{@{}L{26mm}L{28mm}L{16mm}X@{}}
+\toprule
+\headrow \thd{Coluna} & \thd{Tipo} & \thd{Restrição} & \thd{Descrição}\\
+\midrule
+\cd{id} & \cd{integer} & PK & Identificador da família.\\
+\zebra \cd{name} & \cd{varchar(64)} & \textsc{unique} & Nome canônico
+  (\textit{snake\_case}), ex.\ \cd{rolamento\_inner}. Usado como chave em todas
+  as camadas.\\
+\cd{is\_fault} & \cd{boolean} & \textsc{not null} & Distingue falha
+  (12 registros) de estado operacional (5 registros). Determina se há prescrição
+  a emitir.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{Tabela \cd{label\_map}}
+
+Registro auditável da canonicalização: preserva a correspondência entre cada
+rótulo bruto do conjunto de dados original e a família resultante.
+
+\begin{tabularx}{\linewidth}{@{}L{26mm}L{28mm}L{16mm}X@{}}
+\toprule
+\headrow \thd{Coluna} & \thd{Tipo} & \thd{Restrição} & \thd{Descrição}\\
+\midrule
+\cd{raw\_label} & \cd{varchar(128)} & PK & Rótulo bruto normalizado
+  (minúsculas, sem espaços nas bordas). São \num{151} valores distintos.\\
+\zebra \cd{family\_id} & \cd{integer} & FK & Família canônica atribuída.\\
+\bottomrule
+\end{tabularx}
+
+\begin{nota}
+Esta tabela existe para \emph{auditoria}, não para consulta em tempo de
+execução: a canonicalização em \textit{runtime} usa as regras de
+\arq{label\_map.yaml}. Manter o resultado materializado permite responder, meses
+depois, \enquote{por que este registro foi classificado assim?} sem reexecutar
+o ETL.
+\end{nota}
+
+\subsection{Tabela \cd{events}}
+
+Histórico de telemetria. É a maior tabela do sistema (\num{166796} registros na
+carga inicial) e a base de todas as agregações analíticas.
+
+\begin{tabularx}{\linewidth}{@{}L{40mm}L{22mm}L{15mm}X@{}}
+\toprule
+\headrow \thd{Coluna} & \thd{Tipo} & \thd{Índice} & \thd{Descrição}\\
+\midrule
+\endhead
+\cd{id} & \cd{bigint} & PK & Identificador de origem do evento. \textbf{Não}
+  é gerado pelo banco --- ver decisão acima.\\
+\zebra \cd{created\_at} & \cd{timestamptz} & sim & Instante da leitura. Base das
+  séries temporais e da frequência diária.\\
+\cd{raw\_fault} & \cd{varchar(128)} & --- & Anotação original do operador.
+  Identifica também a \emph{campanha de coleta}, fato central na
+  Seção~\ref{sec:vazamento}.\\
+\zebra \cd{family\_id} & \cd{integer} & sim & Família canônica. Nulo quando o
+  evento chega sem anotação (caso normal em produção).\\
+\cd{z\_rms\_velocity\_mm\_s} & \cd{double} & --- & Velocidade eficaz no eixo Z
+  (\si{\milli\meter\per\second}).\\
+\zebra \cd{x\_rms\_velocity\_mm\_s} & \cd{double} & --- & Velocidade eficaz no
+  eixo X (\si{\milli\meter\per\second}). Principal indicador de severidade.\\
+\cd{temperature\_c} & \cd{double} & --- & Temperatura (\si{\degreeCelsius}).
+  \textit{Feature} mais influente do classificador --- e principal suspeita de
+  vazamento por sessão.\\
+\zebra \cd{z\_peak\_acceleration\_g} & \cd{double} & --- & Aceleração de pico em
+  Z ($g$).\\
+\cd{x\_peak\_acceleration\_g} & \cd{double} & --- & Aceleração de pico em X
+  ($g$).\\
+\zebra \cd{z\_peak\_vel\_comp\_freq\_hz} & \cd{double} & --- & Frequência da
+  componente de pico de velocidade em Z (\si{\hertz}).\\
+\cd{x\_peak\_vel\_comp\_freq\_hz} & \cd{double} & --- & Idem, eixo X. Base da
+  \textit{feature} derivada de ordem de rotação.\\
+\zebra \cd{z\_rms\_acceleration\_g} & \cd{double} & --- & Aceleração eficaz em Z
+  ($g$).\\
+\cd{x\_rms\_acceleration\_g} & \cd{double} & --- & Aceleração eficaz em X
+  ($g$).\\
+\zebra \cd{z\_kurtosis} & \cd{double} & --- & Curtose em Z.\\
+\cd{x\_kurtosis} & \cd{double} & --- & Curtose em X.\\
+\zebra \cd{z\_crest\_factor} & \cd{double} & --- & Fator de crista em Z.\\
+\cd{x\_crest\_factor} & \cd{double} & --- & Fator de crista em X.\\
+\zebra \cd{z\_peak\_velocity\_mm\_s} & \cd{double} & --- & Velocidade de pico em
+  Z (\si{\milli\meter\per\second}).\\
+\cd{x\_peak\_velocity\_mm\_s} & \cd{double} & --- & Velocidade de pico em X
+  (\si{\milli\meter\per\second}).\\
+\zebra \cd{z\_high\_freq\_rms\_accel\_g} & \cd{double} & --- & Aceleração eficaz
+  de alta frequência em Z ($g$).\\
+\cd{x\_high\_freq\_rms\_accel\_g} & \cd{double} & --- & Idem, eixo X. Base da
+  razão de alta/baixa frequência.\\
+\zebra \cd{rpm} & \cd{double} & --- & Rotação do eixo. Variável de condição
+  operacional --- estratificar por ela é obrigatório em qualquer leitura de
+  severidade.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{Tabelas \cd{documents} e \cd{doc\_coverage}}
+
+\begin{tabularx}{\linewidth}{@{}L{28mm}L{26mm}L{15mm}X@{}}
+\toprule
+\headrow \thd{Coluna} & \thd{Tipo} & \thd{Restrição} & \thd{Descrição}\\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\cd{documents}}}\\
+\cd{id} & \cd{integer} & PK, AUTO & Identificador do documento.\\
+\zebra \cd{filename} & \cd{varchar(256)} & \textsc{not null} & Nome do arquivo,
+  usado como chave de deduplicação na base vetorial.\\
+\cd{title} & \cd{varchar(256)} & \textsc{not null} & Título técnico exibido nas
+  citações.\\
+\zebra \cd{ingested\_at} & \cd{timestamptz} & \textsc{not null} & Momento da
+  indexação.\\
+\cd{status} & \cd{varchar(32)} & \textit{default} \cd{active} & Permite retirar
+  um procedimento de circulação sem apagar o histórico.\\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\cd{doc\_coverage}}}\\
+\zebra \cd{family\_id} & \cd{integer} & PK, FK & Família coberta.\\
+\cd{document\_id} & \cd{integer} & PK, FK & Documento que a cobre.\\
+\bottomrule
+\end{tabularx}
+
+\begin{atencao}
+\cd{doc\_coverage} é um \textbf{espelho relacional} da cobertura, mantido para
+consulta e relatório. A cobertura efetiva --- aquela que o \textit{guardrail}
+consulta --- é sempre derivada da presença de \textit{chunks} na base vetorial.
+Manter uma única fonte de verdade evita a falha clássica em que a tabela diz
+\enquote{coberto} e o índice está vazio.
+\end{atencao}
+
+\subsection{Tabela \cd{diagnoses}}
+
+Trilha de auditoria: registra cada diagnóstico emitido, permitindo reconstruir
+a posteriori o que o sistema respondeu e com que base.
+
+\begin{tabularx}{\linewidth}{@{}L{32mm}L{22mm}L{15mm}X@{}}
+\toprule
+\headrow \thd{Coluna} & \thd{Tipo} & \thd{Restrição} & \thd{Descrição}\\
+\midrule
+\cd{id} & \cd{bigint} & PK, AUTO & Identificador do registro de auditoria.\\
+\zebra \cd{event\_id} & \cd{bigint} & \textsc{null} & Evento diagnosticado, se
+  houver. Sem FK --- ver nota da Figura~\ref{fig:er}.\\
+\cd{predicted\_family\_id} & \cd{integer} & FK, \textsc{null} & Família
+  prevista.\\
+\zebra \cd{probability} & \cd{double} & \textsc{not null} & Probabilidade
+  atribuída pelo classificador.\\
+\cd{neighbors} & \cd{json} & --- & Identificadores dos 25 vizinhos que
+  sustentaram a resposta.\\
+\zebra \cd{llm\_response} & \cd{json} & \textsc{null} & Prescrição gerada e
+  citações. Nulo quando a família não é documentada.\\
+\cd{created\_at} & \cd{timestamptz} & \textsc{not null} & Momento da emissão.\\
+\bottomrule
+\end{tabularx}
+
+\section{Esquema \cd{adk} --- memória de conversa}
+
+O \textit{framework} de agentes cria tabelas próprias para persistir sessões de
+conversa, e uma delas chama-se \cd{events} --- exatamente o nome da tabela
+central do domínio. A colisão é resolvida por isolamento em esquema dedicado.
+
+\begin{tabularx}{\linewidth}{@{}L{40mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Solução adotada}\\
+\midrule
+Isolamento & Esquema \cd{adk}, criado na inicialização do agente
+  (\cd{CREATE SCHEMA IF NOT EXISTS adk}).\\
+\zebra Roteamento & \cd{search\_path} fixado em \cd{adk} nos parâmetros de
+  conexão da engine assíncrona, de modo que o \textit{framework} nunca
+  \enquote{veja} as tabelas de domínio.\\
+Driver & As sessões exigem driver assíncrono; a URL do banco é convertida de
+  \cd{psycopg2} para \cd{asyncpg} em tempo de inicialização.\\
+\zebra Ciclo de vida & Tabelas criadas pelo próprio \textit{framework}. O
+  domínio não depende delas: se o esquema não existir, o agente falha na
+  inicialização e o sistema degrada para RAG de um passo.\\
+\bottomrule
+\end{tabularx}
+
+\section{Base vetorial --- coleção \cd{manuals}}
+
+Uma única coleção, com espaço métrico de cosseno e índice
+HNSW~\cite{malkov2020hnsw}. Cada registro é um \textit{chunk} de documento.
+
+\begin{tabularx}{\linewidth}{@{}L{26mm}L{20mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Tipo} & \thd{Descrição}\\
+\midrule
+\cd{id} & texto & Chave composta \cd{\{arquivo\}::\{família\}::\{índice\}}.
+  Torna a reindexação idempotente e permite remover um documento por
+  filtro.\\
+\zebra \textit{embedding} & vetor(768) & Representação densa gerada por
+  \cd{gemini-embedding-2} com dimensionalidade truncada.\\
+\cd{document} & texto & Conteúdo do \textit{chunk} (aproximadamente
+  \num{1200} caracteres).\\
+\zebra \cd{metadata.doc} & texto & Nome do arquivo de origem --- vira a citação
+  exibida.\\
+\cd{metadata.title} & texto & Título técnico do procedimento.\\
+\zebra \cd{metadata.section} & texto & Seção corrente no momento da extração
+  (ex.\ \cd{4.2 Alinhamento a laser}).\\
+\cd{metadata.page} & inteiro & Página de origem.\\
+\zebra \cd{metadata.family} & texto & Família canônica coberta. \textbf{É o
+  campo que sustenta o guardrail}: a existência de ao menos um registro com
+  determinada família \emph{é} a definição de \enquote{documentado}.\\
+\bottomrule
+\end{tabularx}
+
+\begin{nota}
+Um documento que cobre $F$ famílias é indexado $F$ vezes, uma por família. Isso
+multiplica o armazenamento, mas permite que o filtro por família seja executado
+pelo próprio índice, e não por pós-filtragem --- o que preservaria menos
+resultados relevantes para um mesmo \textit{top-k}. Com 268 \textit{chunks} na
+base inicial, o custo é irrelevante; em escala de milhares de documentos, a
+alternativa seria um campo multivalorado com filtro de inclusão.
+\end{nota}
+
+\section{Artefatos de aprendizado de máquina}
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}L{20mm}X@{}}
+\toprule
+\headrow \thd{Arquivo} & \thd{Tamanho} & \thd{Conteúdo}\\
+\midrule
+\arq{scaler.joblib} & \SI{1.1}{\kibi\byte} & Médias e desvios das 23
+  \textit{features}, ajustados sobre \SI{100}{\percent} dos dados.\\
+\zebra \arq{lgbm.joblib} & \SI{38}{\mebi\byte} & Classificador multiclasse de
+  400 árvores para 17 classes.\\
+\arq{knn.joblib} & \SI{29}{\mebi\byte} & Índice de vizinhos sobre o histórico
+  completo padronizado.\\
+\zebra \arq{index\_meta.joblib} & \SI{5.8}{\mebi\byte} & Tabela com
+  \cd{id}, \cd{created\_at} e \cd{family} de cada linha indexada --- é o que
+  traduz posição no índice em evento real.\\
+\arq{metrics.json} & \SI{3.9}{\kibi\byte} & Métricas dos três protocolos de
+  avaliação, classes, lista de \textit{features} e \textit{timestamp} do
+  treino.\\
+\bottomrule
+\end{tabularx}
+
+Total de \SI{74}{\mebi\byte}, carregados uma única vez por processo em um
+\textit{singleton} memorizado. O índice de vizinhos é o componente dominante de
+memória em execução e a razão pela qual o serviço de API é o mais pesado da
+topologia (\req{RNF-01}).

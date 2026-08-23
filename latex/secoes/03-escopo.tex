@@ -1,0 +1,412 @@
+% ===========================================================================
+%  3 — Escopo, premissas e requisitos
+% ===========================================================================
+\chapter{Escopo, premissas e requisitos}
+\label{cap:escopo}
+
+Este capítulo delimita o sistema. Ele segue a estrutura recomendada pela norma
+ISO/IEC/IEEE 29148~\cite{iso29148} para especificação de requisitos: declaração
+do problema, fronteiras, premissas, restrições, requisitos funcionais e não
+funcionais, rastreabilidade e critérios de aceite.
+
+\section{Declaração do problema}
+
+\begin{especificacao}{Problema a resolver}
+Dado um novo evento de sensores de vibração de uma máquina rotativa, em formato
+JSON, produzir: (i) o tipo de defeito presente; (ii) a quantificação das
+ocorrências históricas semelhantes --- quantidade, distribuição temporal e
+frequência; e (iii) as instruções de correção fundamentadas na base documental
+da empresa, \textbf{restritas a falhas efetivamente documentadas}. Quando o
+defeito identificado não possui documento orientativo, o sistema deve informar
+essa condição e sugerir o registro de um novo documento técnico.
+\end{especificacao}
+
+Três características desse enunciado moldaram toda a arquitetura:
+
+\begin{enumerate}
+  \item \textbf{A resposta tem três partes de naturezas diferentes.}
+    Classificação (aprendizado supervisionado), agregação histórica (consulta a
+    banco de dados) e prescrição textual (recuperação e geração de linguagem)
+    são três problemas distintos. Tratá-los com um único mecanismo --- por
+    exemplo, pedir tudo a um modelo de linguagem --- degradaria todos os três.
+
+  \item \textbf{\enquote{Ocorrências semelhantes} é um requisito de
+    similaridade, não de classificação.} A pergunta \enquote{quais registros
+    históricos se comportam como este?} é respondida literalmente por uma busca
+    de vizinhos mais próximos~\cite{cover1967nearest}, não pela contagem de
+    registros da classe predita. Daí a presença simultânea de KNN e
+    classificador (\adrr{ADR-04}).
+
+  \item \textbf{A restrição a falhas documentadas é uma garantia, não uma
+    instrução.} Se a verificação de cobertura fosse delegada ao modelo de
+    linguagem, o sistema estaria sujeito a alucinação exatamente no ponto em que
+    o enunciado exige certeza~\cite{ji2023hallucination}. A verificação é
+    portanto determinística e anterior à chamada do modelo (\adrr{ADR-09}).
+\end{enumerate}
+
+\section{Fronteiras do sistema}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=0pt]
+
+  % --- dentro do escopo
+  \node[draw=pmxBlue, line width=1pt, rounded corners=4pt, fill=pmxBlue!4,
+        inner sep=10pt, minimum width=78mm, minimum height=93mm,
+        anchor=north west] (dentro) at (0,0) {};
+  \node[font=\small\bfseries\color{pmxBlueDark}, anchor=north west,
+        fill=pmxSurface, inner sep=3pt] at ([xshift=6mm, yshift=2.5mm]dentro.north west)
+        {DENTRO DO ESCOPO};
+
+  \node[action, text width=64mm, anchor=north] (d1) at ([yshift=-11mm]dentro.north)
+       {\textbf{Diagnóstico de evento}\\[1pt]{\scriptsize Classificação da família de
+        falha com probabilidade; concordância de vizinhos; gate de confiança}};
+  \node[action, text width=64mm, below=3mm of d1] (d2)
+       {\textbf{Quantificação histórica}\\[1pt]{\scriptsize Contagem, primeira e última
+        ocorrência, frequência diária, distribuição mensal, IDs dos vizinhos}};
+  \node[action, text width=64mm, below=3mm of d2] (d3)
+       {\textbf{Prescrição documental (RAG)}\\[1pt]{\scriptsize Recuperação de trechos,
+        geração em contexto fechado, citações determinísticas}};
+  \node[actionerr, text width=64mm, below=3mm of d3] (d4)
+       {\textbf{\textit{Guardrail} de cobertura}\\[1pt]{\scriptsize Falha sem documento
+        $\rightarrow$ aviso explícito + sugestão de registro}};
+  \node[action, text width=64mm, below=3mm of d4] (d5)
+       {\textbf{Ciclo documental}\\[1pt]{\scriptsize Cadastro de PDF, OCR quando
+        necessário, cobertura imediata da família}};
+  \node[action, text width=64mm, below=3mm of d5] (d6)
+       {\textbf{Ingestão industrial MQTT}\\[1pt]{\scriptsize Validação, persistência
+        idempotente, DLQ, alertas de volta à planta}};
+  \node[action, text width=64mm, below=3mm of d6] (d7)
+       {\textbf{Analítica e chat}\\[1pt]{\scriptsize Quatro painéis analíticos; agente
+        com quatro ferramentas e memória de sessão}};
+
+  % --- fora do escopo
+  \node[draw=pmxMuted, line width=1pt, dash pattern=on 3pt off 2.4pt,
+        rounded corners=4pt, fill=pmxPaper, inner sep=10pt,
+        minimum width=72mm, minimum height=93mm, anchor=north west]
+        (fora) at (84mm,0) {};
+  \node[font=\small\bfseries\color{pmxInkSoft}, anchor=north west,
+        fill=pmxSurface, inner sep=3pt] at ([xshift=6mm, yshift=2.5mm]fora.north west)
+        {FORA DO ESCOPO (JUSTIFICADO)};
+
+  \node[actionsys, text width=58mm, anchor=north] (f1) at ([yshift=-11mm]fora.north)
+       {\textbf{Prognóstico de vida útil remanescente}\\[1pt]{\scriptsize Exige histórico
+        de degradação até a falha; janela de 47 dias não o contém}};
+  \node[actionsys, text width=58mm, below=3mm of f1] (f2)
+       {\textbf{Análise espectral (FFT/envelope)}\\[1pt]{\scriptsize O conjunto de dados
+        traz métricas pré-agregadas, não a forma de onda}};
+  \node[actionsys, text width=58mm, below=3mm of f2] (f3)
+       {\textbf{Atuação automática na planta}\\[1pt]{\scriptsize Decisão de intervenção
+        permanece humana; sistema publica alerta, não comando}};
+  \node[actionsys, text width=58mm, below=3mm of f3] (f4)
+       {\textbf{OPC UA e Sparkplug B}\\[1pt]{\scriptsize MQTT cobre a demonstração do
+        ciclo; citados como evolução (\adrr{ADR-10})}};
+  \node[actionsys, text width=58mm, below=3mm of f4] (f5)
+       {\textbf{Autenticação e perfis de usuário}\\[1pt]{\scriptsize Não requerido;
+        previsto como \req{RI-06} no plano de evolução}};
+  \node[actionsys, text width=58mm, below=3mm of f5] (f6)
+       {\textbf{Multiplanta e multiativo}\\[1pt]{\scriptsize Dados provêm de uma única
+        bancada; o modelo de dados já admite \cd{machine\_id}}};
+  \node[actionsys, text width=58mm, below=3mm of f6] (f7)
+       {\textbf{Retreino automático em produção}\\[1pt]{\scriptsize Treino é operação
+        deliberada e auditada, não contínua}};
+
+\end{tikzpicture}}
+\caption[Fronteiras do escopo]{Fronteiras do sistema: capacidades entregues e
+  exclusões deliberadas com sua justificativa. Cada exclusão decorre de uma
+  limitação do dado disponível ou de uma decisão explícita de manter a decisão
+  final sob controle humano.}
+\label{fig:escopo}
+\end{figure}
+
+\section{Premissas}
+
+\begin{tabularx}{\linewidth}{@{}L{16mm}X@{}}
+\toprule
+\headrow \thd{ID} & \thd{Premissa}\\
+\midrule
+\req{PR-01} & O conjunto de dados \arq{documentos/banner.csv} (\num{166796}
+  registros, 30/04/2026 a 16/06/2026) representa o histórico corporativo de
+  eventos de sensor.\\
+\zebra \req{PR-02} & Os documentos \arq{Doc1.pdf} a \arq{Doc6.pdf} representam a
+  base documental orientativa da empresa. Novos procedimentos entram pela
+  interface ou pela API.\\
+\req{PR-03} & As anotações de falha do conjunto de dados são confiáveis quanto
+  ao tipo de defeito, ainda que ruidosas quanto à grafia.\\
+\zebra \req{PR-04} & O projeto de nuvem GCP possui a API Vertex AI habilitada e
+  credenciais válidas para os modelos \cd{gemini-3.6-flash} e
+  \cd{gemini-embedding-2}.\\
+\req{PR-05} & A rede da planta permite tráfego MQTT entre gateway de aquisição e
+  \textit{broker}.\\
+\zebra \req{PR-06} & Existe um responsável de engenharia de manutenção apto a
+  redigir e cadastrar novos procedimentos quando o sistema apontar lacuna
+  documental.\\
+\bottomrule
+\end{tabularx}
+
+\section{Restrições}
+
+\begin{tabularx}{\linewidth}{@{}L{16mm}L{34mm}X@{}}
+\toprule
+\headrow \thd{ID} & \thd{Restrição} & \thd{Consequência de projeto}\\
+\midrule
+\req{RE-01} & Estação de trabalho alvo: \SI{32}{\gibi\byte} de RAM, GPU de
+  \SI{16}{\gibi\byte} & Nenhuma inferência local de modelo de linguagem; os
+  modelos pesados são consumidos como serviço gerenciado. Artefatos de ML somam
+  \SI{74}{\mebi\byte}.\\
+\zebra \req{RE-02} & Python como linguagem principal & Toda a solução ---
+  API, interface, \textit{worker} e \textit{scripts} --- em Python 3.12.\\
+\req{RE-03} & Ausência da forma de onda bruta & Assinaturas espectrais
+  (BPFO/BPFI/BSF) são inalcançáveis; as \textit{features} derivadas trabalham
+  sobre as métricas pré-agregadas disponíveis.\\
+\zebra \req{RE-04} & Janela temporal de 47 dias & Impossibilidade de observar
+  tendência de degradação de longo prazo; distribuição temporal reflete
+  cronograma de ensaios.\\
+\req{RE-05} & Cada condição experimental coletada em uma única campanha &
+  Confundimento entre sessão e rótulo; teto de generalização imposto pelo
+  desenho experimental (Seção~\ref{sec:vazamento}).\\
+\zebra \req{RE-06} & Segredos não podem residir no repositório & Credenciais
+  transportadas em variável de ambiente codificada em base64 e materializadas em
+  arquivo temporário com permissão \cd{0600}.\\
+\req{RE-07} & Sistema de arquivos efêmero em nuvem & Índice vetorial exige
+  volume persistente e rotina de \textit{bootstrap} automático.\\
+\bottomrule
+\end{tabularx}
+
+\section{Requisitos funcionais}
+\label{sec:rf}
+
+\begin{tabularx}{\linewidth}{@{}L{15mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{ID} & \thd{Requisito} & \thd{Critério de verificação}\\
+\midrule
+\endhead
+\req{RF-01} & Identificar o tipo de defeito de um evento JSON, com
+  probabilidade associada &
+  \cd{POST /diagnose} retorna \cd{predicted\_fault}, \cd{probability} e
+  \cd{is\_fault} para o evento do enunciado.\\
+\zebra \req{RF-02} & Quantificar ocorrências históricas semelhantes &
+  Resposta contém \cd{count}, \cd{first\_seen}, \cd{last\_seen},
+  \cd{freq\_per\_day}, \cd{timeline} e \cd{neighbor\_ids}.\\
+\req{RF-03} & Gerar instruções de correção a partir da base documental &
+  Resposta contém \cd{prescription.instructions\_md} com seções de segurança,
+  diagnóstico, correção, validação e prevenção, e ao menos uma citação.\\
+\zebra \req{RF-04} & Restringir a prescrição a falhas documentadas &
+  Família sem \textit{chunks} indexados produz \cd{documented=false},
+  \cd{prescription=null} e \cd{suggestion} preenchido, \textbf{sem} chamada ao
+  modelo de linguagem.\\
+\req{RF-05} & Permitir o cadastro de novo documento orientativo &
+  \cd{POST /documents} com PDF, título e famílias indexa o conteúdo e a família
+  passa a ser coberta na requisição seguinte.\\
+\zebra \req{RF-06} & Expor a cobertura documental corrente &
+  \cd{GET /documents} e \cd{GET /health} retornam
+  \cd{documented\_families}.\\
+\req{RF-07} & Oferecer conversa prescritiva com acesso a histórico e documentos
+  & \cd{POST /chat} responde usando as quatro ferramentas do agente, com memória
+  por sessão e citações.\\
+\zebra \req{RF-08} & Ingerir o histórico corporativo com canonicalização
+  auditável & \arq{scripts/ingest\_data.py} carrega \num{166796} eventos,
+  mapeia \num{151} rótulos em 17 famílias e \textbf{falha} se algum rótulo não
+  casar com regra.\\
+\req{RF-09} & Treinar o motor de diagnóstico e registrar métricas &
+  \cd{python -m src.ml.train} gera quatro artefatos e
+  \arq{metrics.json} com os três protocolos de validação.\\
+\zebra \req{RF-10} & Ingerir telemetria industrial por MQTT &
+  Evento publicado em \cd{sensors/+/telemetry} é validado, persistido,
+  diagnosticado e --- sendo falha --- republicado em
+  \cd{sensors/\{maquina\}/alerts}.\\
+\req{RF-11} & Não descartar mensagem inválida em silêncio &
+  \textit{Payload} inválido é publicado em \cd{sensors/\{maquina\}/dlq} com o
+  motivo da rejeição.\\
+\zebra \req{RF-12} & Disponibilizar painel analítico do histórico &
+  Interface apresenta quatro painéis: visão geral, severidade e física,
+  assinaturas e qualidade do modelo.\\
+\req{RF-13} & Consultar eventos recentes &
+  \cd{GET /events} aceita \cd{limit} e \cd{family} e devolve os eventos mais
+  recentes.\\
+\zebra \req{RF-14} & Fornecer estatísticas agregadas &
+  \cd{GET /stats} devolve contagem por família e série mensal de falhas.\\
+\req{RF-15} & Reportar o estado de saúde do serviço &
+  \cd{GET /health} indica carga dos artefatos, famílias documentadas e modelos
+  configurados.\\
+\zebra \req{RF-16} & Simular sensor industrial para demonstração &
+  \arq{scripts/simulate\_sensor.py} publica eventos reais do conjunto de dados,
+  com filtro por família e modo de \textit{payload} inválido.\\
+\req{RF-17} & Auditar cada diagnóstico emitido &
+  Tabela \cd{diagnoses} registra evento, família prevista, probabilidade,
+  vizinhos e resposta gerada.\\
+\zebra \req{RF-18} & Indexar a base documental automaticamente em ambiente novo
+  & Com \cd{RAG\_BOOTSTRAP=true} e índice vazio, a API indexa os PDFs em
+  \textit{thread} própria no \textit{startup}.\\
+\req{RF-19} & Sinalizar diagnóstico incerto &
+  Resposta traz \cd{confidence} em \{\cd{alta}, \cd{media}, \cd{baixa}\},
+  calculado como probabilidade $\times$ concordância dos vizinhos.\\
+\zebra \req{RF-20} & Processar documentos sem camada de texto &
+  PDF escaneado é transcrito por OCR multimodal antes do
+  \textit{chunking}.\\
+\bottomrule
+\end{tabularx}
+
+\section{Requisitos não funcionais}
+\label{sec:rnf}
+
+Cada requisito está associado a uma característica de qualidade da norma
+ISO/IEC 25010~\cite{iso25010}.
+
+\begin{tabularx}{\linewidth}{@{}L{15mm}L{32mm}X@{}}
+\toprule
+\headrow \thd{ID} & \thd{Característica} & \thd{Requisito e como é atendido}\\
+\midrule
+\endhead
+\req{RNF-01} & Eficiência de recursos & Executar na estação alvo
+  (\SI{32}{\gibi\byte} RAM). Artefatos de ML somam \SI{74}{\mebi\byte};
+  \textit{footprint} da API em torno de \SI{1}{\gibi\byte}; nenhuma inferência
+  local de LLM.\\
+\zebra \req{RNF-02} & Desempenho temporal & Diagnóstico sem geração de texto em
+  menos de \SI{1}{\second}; agregações analíticas em cerca de
+  \SI{0.2}{\second} sobre \num{166796} eventos, o que dispensa
+  pré-computação.\\
+\req{RNF-03} & Reprodutibilidade & Ambiente completo por
+  \cd{docker compose up}; sementes fixas (\cd{RANDOM\_STATE=42}) no treino e no
+  \textit{holdout} por sessão.\\
+\zebra \req{RNF-04} & Testabilidade & \textbf{63 testes} executáveis sem
+  credenciais e sem rede: o cliente de linguagem é substituído por um
+  \textit{fake} determinístico e o banco por SQLite em memória.\\
+\req{RNF-05} & Segurança --- confidencialidade & Nenhum segredo no repositório
+  ou na imagem. Credencial em base64 por variável de ambiente, materializada em
+  arquivo temporário com permissão \cd{0600}; \textit{broker} público com
+  autenticação obrigatória.\\
+\zebra \req{RNF-06} & Adequação funcional --- correção & Toda afirmação factual
+  da resposta é rastreável: citações vêm dos metadados do \textit{retrieval};
+  números vêm de SQL sobre o histórico.\\
+\req{RNF-07} & Confiabilidade --- tolerância a falhas & Ingestão com QoS 1 e
+  persistência idempotente por chave primária; DLQ para \textit{payloads}
+  inválidos; persistência de auditoria em modo \textit{best-effort} que nunca
+  derruba a resposta.\\
+\zebra \req{RNF-08} & Portabilidade & Imagem única para API, interface e
+  \textit{worker}, diferenciados apenas pelo comando de inicialização; toda a
+  configuração por variável de ambiente~\cite{wiggins2017twelvefactor}.\\
+\req{RNF-09} & Manutenibilidade --- modularidade & Esquema de validação único
+  compartilhado por API, MQTT e ETL; \textit{lint} obrigatório
+  (\cd{ruff}, linha de 100 colunas) em porta de CI.\\
+\zebra \req{RNF-10} & Usabilidade --- acessibilidade & Paleta validada para
+  daltonismo: separação $\Delta E \geq 6$ em deuteranopia
+  (CIEDE2000~\cite{sharma2005ciede2000}); codificação redundante por ícone e
+  rótulo.\\
+\req{RNF-11} & Observabilidade & Registro estruturado em todos os serviços;
+  \textit{endpoint} de saúde com estado de artefatos e cobertura;
+  histórico de implantações e \textit{logs} acessíveis por CLI.\\
+\zebra \req{RNF-12} & Disponibilidade & A conversa nunca fica indisponível: sem
+  agente ou credenciais, o \textit{endpoint} degrada automaticamente para RAG de
+  um passo, com indicação visual do modo em uso.\\
+\req{RNF-13} & Eficiência de custo & Topologia reduzível a três serviços
+  (banco, API e interface) sem perda das capacidades exigidas pelo enunciado.\\
+\zebra \req{RNF-14} & Integridade de dados & Rótulo bruto desconhecido
+  interrompe o ETL com exceção explícita; nada é descartado ou classificado
+  silenciosamente.\\
+\bottomrule
+\end{tabularx}
+
+\section{Matriz de rastreabilidade}
+\label{sec:rastreabilidade}
+
+A matriz liga cada requisito funcional ao componente que o implementa e ao teste
+que o verifica. É o instrumento que permite alterar o sistema sem perder
+garantias: ao modificar um componente, a coluna de testes indica o que precisa
+ser reexecutado.
+
+\begin{tabularx}{\linewidth}{@{}L{14mm}L{45mm}L{28mm}X@{}}
+\toprule
+\headrow \thd{RF} & \thd{Implementação} & \thd{Caso de uso} & \thd{Teste}\\
+\midrule
+\endhead
+\req{RF-01} & \arq{src/ml/diagnose.py} :: \cd{DiagnosisEngine.diagnose} &
+  \ucr{UC-01} & \cd{test\_diagnose\_fault\_documented\_flow}\\
+\zebra \req{RF-02} & \arq{src/ml/diagnose.py} :: \cd{\_similar\_events} &
+  \ucr{UC-01} & \cd{test\_diagnose\_fault\_documented\_flow}\\
+\req{RF-03} & \arq{src/rag/service.py} :: \cd{prescribe} &
+  \ucr{UC-02} & \cd{test\_prescribe\_documented}\\
+\zebra \req{RF-04} & \arq{src/rag/store.py} :: \cd{is\_documented} &
+  \ucr{UC-03} & \cd{test\_undocumented\_never\_calls\_llm}\\
+\req{RF-05} & \arq{src/api/main.py} :: \cd{upload\_document} &
+  \ucr{UC-04} & \cd{test\_upload\_document\_invalid\_family}\\
+\zebra \req{RF-06} & \arq{src/rag/store.py} :: \cd{documented\_families} &
+  \ucr{UC-05} & \cd{test\_documented\_families}\\
+\req{RF-07} & \arq{src/llm/agent.py} :: \cd{MaintenanceAgent.ask} &
+  \ucr{UC-06} & \cd{test\_chat\_usa\_agente\_quando\_disponivel}\\
+\zebra \req{RF-08} & \arq{scripts/ingest\_data.py} +
+  \arq{src/etl/canonize.py} & \ucr{UC-07} &
+  \cd{test\_canonize}, \cd{test\_unknown\_label\_raises}\\
+\req{RF-09} & \arq{src/ml/train.py} :: \cd{train} &
+  \ucr{UC-08} & Fixture \cd{env\_dirs} (treino sintético de ponta a ponta)\\
+\zebra \req{RF-10} & \arq{src/ingestion/mqtt\_worker.py} &
+  \ucr{UC-09} & Verificação manual documentada na
+  Seção~\ref{sec:demonstracao}\\
+\req{RF-11} & \cd{IngestionWorker.\_to\_dlq} &
+  \ucr{UC-10} & \arq{scripts/simulate\_sensor.py --invalid}\\
+\zebra \req{RF-12} & \arq{src/ui/dashboard.py} +
+  \arq{src/api/analytics.py} & \ucr{UC-11} &
+  \cd{test\_analytics.py} (5 testes)\\
+\req{RF-13} & \arq{src/api/main.py} :: \cd{events} & \ucr{UC-11} &
+  Cobertura por \cd{test\_api.py}\\
+\zebra \req{RF-14} & \arq{src/api/main.py} :: \cd{stats} & \ucr{UC-11} &
+  Cobertura por \cd{test\_api.py}\\
+\req{RF-15} & \arq{src/api/main.py} :: \cd{health} & \ucr{UC-12} &
+  \cd{test\_health}\\
+\zebra \req{RF-16} & \arq{scripts/simulate\_sensor.py} & \ucr{UC-09} &
+  Verificação manual\\
+\req{RF-17} & \cd{\_persist\_diagnosis} & \ucr{UC-01} &
+  Coberto indiretamente por \cd{test\_api.py}\\
+\zebra \req{RF-18} & \arq{src/rag/bootstrap.py} :: \cd{bootstrap\_if\_empty} &
+  \ucr{UC-04} & Verificação em implantação
+  (Seção~\ref{sec:verificacaodeploy})\\
+\req{RF-19} & \cd{DiagnosisEngine.\_confidence} & \ucr{UC-01} &
+  \cd{test\_diagnose\_normal\_state}\\
+\zebra \req{RF-20} & \arq{src/rag/chunking.py} :: \cd{\_iter\_blocks\_ocr} &
+  \ucr{UC-04} & \cd{test\_ocr\_fallback\_pdf\_sem\_texto}\\
+\bottomrule
+\end{tabularx}
+
+\section{Critérios de aceite}
+\label{sec:aceite}
+
+O sistema é considerado aderente ao enunciado quando os seis cenários abaixo
+produzem o resultado esperado. Todos foram verificados; o Apêndice~\ref{ap:payloads}
+traz os \textit{payloads} completos.
+
+\begin{tabularx}{\linewidth}{@{}L{9mm}L{44mm}X@{}}
+\toprule
+\headrow \thd{\#} & \thd{Cenário} & \thd{Resultado esperado e observado}\\
+\midrule
+CA-1 & Evento do enunciado submetido a \cd{POST /diagnose} &
+  Família \cd{cocked\_rotor} com probabilidade de \SI{92}{\percent};
+  \num{14275} ocorrências similares com distribuição temporal e frequência
+  diária; instruções de correção citando o \arq{Doc6.pdf}.\\
+\zebra CA-2 & Evento de família sem documento
+  (\cd{ventoinha}, \cd{eccentric\_rotor}, \cd{falta\_fase}) &
+  \cd{documented=false}, prescrição nula, sugestão de registro preenchida e
+  \textbf{nenhuma} chamada ao modelo de linguagem.\\
+CA-3 & Cadastro de PDF cobrindo família antes descoberta &
+  A família passa a constar em \cd{documented\_families} e a prescrição é
+  gerada na requisição seguinte.\\
+\zebra CA-4 & Evento de estado operacional (\cd{normal}) &
+  \cd{is\_fault=false}, sem prescrição e sem sugestão --- não há ação a
+  prescrever.\\
+CA-5 & \textit{Payload} inválido publicado no tópico de telemetria &
+  Mensagem redirecionada para a DLQ com o motivo; nenhum registro gravado no
+  banco.\\
+\zebra CA-6 & Suíte de testes e \textit{lint} em ambiente limpo &
+  \cd{ruff check} sem apontamentos; \textbf{63 testes} aprovados sem
+  credenciais de nuvem.\\
+\bottomrule
+\end{tabularx}
+
+\begin{decisao}
+Os critérios de aceite foram escritos a partir do enunciado, não a partir do
+código já escrito. O cenário CA-2 em particular existe porque o enunciado exige
+o comportamento de \enquote{problema não documentado}: três famílias presentes
+no histórico (\cd{eccentric\_rotor}, \cd{ventoinha}, \cd{falta\_fase}) foram
+deliberadamente mantidas \emph{sem} documento, para que esse caminho seja
+demonstrável com dados reais em vez de simulado.
+\end{decisao}

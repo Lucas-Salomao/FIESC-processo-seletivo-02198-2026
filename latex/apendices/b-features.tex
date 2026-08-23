@@ -1,0 +1,136 @@
+% ===========================================================================
+%  Apendice B — Dicionario de features
+% ===========================================================================
+\chapter{Dicionário completo de \textit{features}}
+\label{ap:features}
+
+O vetor de entrada do modelo tem 23 dimensões, na ordem exata abaixo. A
+\textbf{ordem é significativa}: ela é a ordem esperada pelos artefatos
+treinados. Reordenar a lista sem retreinar produz predições silenciosamente
+erradas.
+
+\section{Grandezas brutas (18)}
+
+\begin{tabularx}{\linewidth}{@{}L{8mm}L{44mm}L{18mm}X@{}}
+\toprule
+\headrow \thd{\#} & \thd{Nome} & \thd{Unidade} & \thd{Significado físico}\\
+\midrule
+\endhead
+1 & \cd{z\_rms\_velocity\_mm\_s} & \si{\milli\meter\per\second} &
+  Velocidade eficaz de vibração no eixo Z (axial).\\
+\zebra 2 & \cd{x\_rms\_velocity\_mm\_s} & \si{\milli\meter\per\second} &
+  Velocidade eficaz no eixo X (radial). É o indicador normativo de severidade
+  global~\cite{iso10816}.\\
+3 & \cd{temperature\_c} & \si{\degreeCelsius} &
+  Temperatura medida no ponto do sensor. \textit{Feature} mais influente do
+  classificador --- e a mais suspeita de funcionar como carimbo de campanha
+  (Seção~\ref{sec:vazamento}).\\
+\zebra 4 & \cd{z\_peak\_acceleration\_g} & $g$ &
+  Aceleração de pico no eixo Z. Sensível a impactos.\\
+5 & \cd{x\_peak\_acceleration\_g} & $g$ &
+  Aceleração de pico no eixo X.\\
+\zebra 6 & \cd{z\_peak\_vel\_comp\_freq\_hz} & \si{\hertz} &
+  Frequência da componente dominante de velocidade em Z.\\
+7 & \cd{x\_peak\_vel\_comp\_freq\_hz} & \si{\hertz} &
+  Idem, eixo X. Base da \textit{feature} derivada de ordem. \SI{61}{\hertz}
+  responde por \SI{48.7}{\percent} dos registros --- distribuição quase
+  degenerada.\\
+\zebra 8 & \cd{z\_rms\_acceleration\_g} & $g$ &
+  Aceleração eficaz em Z (banda completa).\\
+9 & \cd{x\_rms\_acceleration\_g} & $g$ &
+  Aceleração eficaz em X (banda completa).\\
+\zebra 10 & \cd{z\_kurtosis} & --- &
+  Curtose do sinal em Z. Teoricamente indicativa de
+  impactos~\cite{randall2011tutorial}; neste conjunto de dados varia entre
+  \num{2,65} e \num{2,75} em \emph{todas} as famílias.\\
+11 & \cd{x\_kurtosis} & --- &
+  Curtose em X, com a mesma limitação.\\
+\zebra 12 & \cd{z\_crest\_factor} & --- &
+  Razão pico/eficaz em Z. Varia entre \num{3,73} e \num{3,85} em todas as
+  famílias.\\
+13 & \cd{x\_crest\_factor} & --- &
+  Fator de crista em X.\\
+\zebra 14 & \cd{z\_peak\_velocity\_mm\_s} & \si{\milli\meter\per\second} &
+  Velocidade de pico em Z.\\
+15 & \cd{x\_peak\_velocity\_mm\_s} & \si{\milli\meter\per\second} &
+  Velocidade de pico em X. Colinear com a velocidade eficaz em X --- razão $F$
+  idêntica (\num{1193.6}), porque o fator de crista é quase constante.\\
+\zebra 16 & \cd{z\_high\_freq\_rms\_accel\_g} & $g$ &
+  Aceleração eficaz de alta frequência em Z.\\
+17 & \cd{x\_high\_freq\_rms\_accel\_g} & $g$ &
+  Idem, eixo X. Base da razão de alta/baixa frequência.\\
+\zebra 18 & \cd{rpm} & rpm &
+  Rotação do eixo. Variável de \emph{condição operacional}: estratificar por ela
+  é obrigatório em qualquer leitura de severidade
+  (Seção~\ref{sec:severidade}).\\
+\bottomrule
+\end{tabularx}
+
+\section{\textit{Features} derivadas (5)}
+
+\begin{tabularx}{\linewidth}{@{}L{8mm}L{40mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{\#} & \thd{Nome} & \thd{Definição} & \thd{Motivação}\\
+\midrule
+19 & \cd{x\_peak\_order} &
+  $\min\!\left(\dfrac{f_{\text{pico},X}}{\max(\text{rpm}/60,\,10^{-6})},\,50\right)$ &
+  Ordem do pico no eixo X. Os manuais descrevem assinaturas em múltiplos da
+  rotação, não em \si{\hertz} absoluto.\\
+\zebra 20 & \cd{z\_peak\_order} &
+  Idem, eixo Z &
+  Ordem do pico no eixo axial.\\
+21 & \cd{radial\_axial\_ratio} &
+  $\dfrac{v_{\text{RMS},X}}{v_{\text{RMS},Z} + 10^{-6}}$ &
+  Desbalanceamento é predominantemente radial; desalinhamento e rotor inclinado
+  produzem componente axial apreciável.\\
+\zebra 22 & \cd{hf\_lf\_ratio\_x} &
+  $\dfrac{a_{\text{HF,RMS},X}}{a_{\text{RMS},X} + 10^{-6}}$ &
+  Defeitos localizados em rolamentos excitam preferencialmente alta
+  frequência.\\
+23 & \cd{hf\_lf\_ratio\_z} &
+  Idem, eixo Z &
+  Mesma motivação, eixo axial.\\
+\bottomrule
+\end{tabularx}
+
+\section{Colunas descartadas}
+
+\begin{tabularx}{\linewidth}{@{}L{50mm}X@{}}
+\toprule
+\headrow \thd{Coluna descartada} & \thd{Motivo}\\
+\midrule
+Velocidades em \si{\inch\per\second} & Transformação linear exata das
+  contrapartes em \si{\milli\meter\per\second} (fator \num{25,4}). Inclusão
+  produziria colinearidade perfeita sem acrescentar informação.\\
+\zebra Temperatura em \si{\degF} & Transformação afim exata da temperatura em
+  \si{\degreeCelsius}.\\
+\cd{fault} (rótulo bruto) & É o \emph{alvo}, não \textit{feature}. Preservado em
+  \cd{events.raw\_fault} para auditoria e para identificar a campanha de coleta
+  na análise de vazamento.\\
+\zebra \cd{id} e \cd{created\_at} & Identificador e instante não são sintomas
+  mecânicos. Incluí-los seria vazamento explícito, dado que o instante
+  identifica a campanha.\\
+\bottomrule
+\end{tabularx}
+
+\section{Poder discriminativo observado}
+
+Razão entre a variância inter-famílias e a variância intra-família (estatística
+no espírito do $F$ de análise de variância), calculada sobre as famílias com ao
+menos 30 eventos.
+
+\begin{tabularx}{\linewidth}{@{}XR{28mm}L{56mm}@{}}
+\toprule
+\headrow \thd{\textit{Feature}} & \thd{Razão $F$} & \thd{Leitura}\\
+\midrule
+velocidade RMS X & \num{1193.6} & Melhor discriminador do conjunto.\\
+\zebra velocidade de pico X & \num{1193.6} & Colinear com a anterior.\\
+frequência de pico X & \num{1106.8} & Alto valor, mas distribuição quase
+  degenerada.\\
+\zebra temperatura & \num{885.3} & Discrimina --- e também carimba a campanha.\\
+rotação & \num{208.3} & Condição operacional, não sintoma.\\
+\zebra curtose Z & \num{189.2} & \textbf{Baixo}: contraria a previsão dos
+  manuais.\\
+aceleração de pico Z & \num{188.2} & Baixo.\\
+\bottomrule
+\end{tabularx}

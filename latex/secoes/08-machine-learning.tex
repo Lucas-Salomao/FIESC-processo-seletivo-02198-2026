@@ -1,0 +1,761 @@
+% ===========================================================================
+%  8 — Aprendizado de maquina
+% ===========================================================================
+\chapter{Motor de diagnóstico: engenharia de \textit{features}, modelo e
+  validação}
+\label{cap:ml}
+
+Este capítulo documenta o componente que produz o \emph{tipo de defeito} e as
+\emph{ocorrências semelhantes}. Ele é organizado na ordem em que as decisões
+foram tomadas: primeiro o que os manuais dizem sobre a física do problema,
+depois as \textit{features} que traduzem essa física, depois a escolha do
+algoritmo, o protocolo de validação, os resultados --- e, por fim, o diagnóstico
+honesto de por que os resultados são o que são.
+
+\section{Fundamentação física}
+\label{sec:fisica-fundamentos}
+
+A análise de vibração de máquinas rotativas não é um problema genérico de
+classificação tabular: existe teoria estabelecida que relaciona cada defeito a
+uma assinatura espectral específica~\cite{randall2011book,
+randall2011tutorial}. Essa teoria é o que justifica as \textit{features}
+derivadas.
+
+\begin{table}[H]
+\caption{Assinaturas de defeito segundo a literatura de análise de vibração}
+\label{tab:assinaturas-teoria}
+\begin{tabularx}{\linewidth}{@{}L{36mm}L{34mm}X@{}}
+\toprule
+\headrow \thd{Defeito} & \thd{Assinatura esperada} & \thd{Implicação para as
+  \textit{features}}\\
+\midrule
+Desbalanceamento & Pico dominante em $1\times$ a rotação; amplitude
+  proporcional a $m\,r\,\omega^2$ &
+  Exige \textit{feature} de \emph{ordem} (frequência normalizada pela rotação),
+  não de frequência absoluta. A dependência quadrática com $\omega$ é
+  verificável --- e foi verificada (Seção~\ref{sec:fisica}).\\
+\zebra Desalinhamento e rotor inclinado & Componentes em $1\times$ e $2\times$;
+  presença de vibração \emph{axial} apreciável &
+  Justifica a razão entre eixos radial e axial como \textit{feature}.\\
+Defeitos de rolamento (BPFO, BPFI, BSF) & Múltiplos não inteiros da rotação,
+  determinados pela geometria; impactos elevam curtose e fator de crista &
+  Justifica a razão entre energia de alta frequência e energia global. A
+  detecção das frequências características exigiria o espectro completo,
+  indisponível.\\
+\zebra Falhas de correia e polia & Componentes subsincrônicas
+  ($<1\times$) e harmônicas da frequência da correia &
+  Recuperáveis apenas parcialmente a partir de um único valor de pico.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{limitacao}
+O conjunto de dados fornece \textbf{métricas pré-agregadas} pelo sensor, não a
+forma de onda. Isso significa que as frequências características de rolamento
+--- o instrumento mais poderoso do diagnóstico de vibração --- são
+estruturalmente inalcançáveis: elas exigem análise de envelope sobre o sinal
+bruto~\cite{randall2011tutorial}. As \textit{features} derivadas extraem o
+máximo do que existe, mas não substituem o espectro.
+\end{limitacao}
+
+\section{\textit{Features} do modelo}
+\label{sec:features}
+
+O vetor de entrada tem 23 dimensões: 18 grandezas brutas e 5 derivadas.
+
+\subsection{Grandezas brutas}
+
+As 18 grandezas brutas são as colunas do conjunto de dados em unidades SI. As
+duplicatas em \si{\inch\per\second} e \si{\degF} foram excluídas: são
+transformações lineares exatas das contrapartes métricas e sua inclusão
+introduziria colinearidade perfeita sem acrescentar informação. A lista completa
+está no Apêndice~\ref{ap:features}.
+
+\subsection{\textit{Features} derivadas}
+
+\begin{table}[H]
+\caption{\textit{Features} derivadas e sua motivação física}
+\label{tab:derivadas}
+\begin{tabularx}{\linewidth}{@{}L{32mm}L{38mm}X@{}}
+\toprule
+\headrow \thd{\textit{Feature}} & \thd{Definição} & \thd{Motivação}\\
+\midrule
+\cd{x\_peak\_order} \newline \cd{z\_peak\_order} &
+  $\dfrac{f_{\text{pico}}}{\max(\text{RPM}/60,\;\varepsilon)}$,
+  limitada a 50 &
+  Converte frequência absoluta em \emph{ordem} de rotação. Os manuais descrevem
+  assinaturas em ordens; sem essa normalização, o mesmo defeito em regimes de
+  rotação distintos apareceria como \textit{features} distintas.\\
+\zebra \cd{radial\_axial\_ratio} &
+  $\dfrac{v_{\text{RMS},X}}{v_{\text{RMS},Z} + \varepsilon}$ &
+  Desbalanceamento é predominantemente radial; desalinhamento e rotor
+  inclinado produzem componente axial apreciável. A razão captura essa
+  diferença de forma invariante à amplitude absoluta.\\
+\cd{hf\_lf\_ratio\_x} \newline \cd{hf\_lf\_ratio\_z} &
+  $\dfrac{a_{\text{HF,RMS}}}{a_{\text{RMS}} + \varepsilon}$ &
+  Defeitos localizados em rolamentos excitam preferencialmente alta frequência.
+  A razão aproxima, com o dado disponível, o que a análise de envelope faria
+  com o sinal bruto.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+O cálculo usa proteção numérica explícita ($\varepsilon = 10^{-6}$ e limite
+superior de ordem igual a 50) para tratar os 658 eventos com rotação nula ---
+motor desligado --- sem produzir divisão por zero nem valores extremos que
+distorceriam a padronização.
+
+\subsection{Padronização}
+
+Todas as 23 \textit{features} são padronizadas ($z = (x-\mu)/\sigma$) com
+parâmetros ajustados no conjunto de treino. A padronização é
+\textbf{obrigatória}, não opcional: a busca por vizinhos usa distância
+euclidiana, e sem normalização a rotação --- na ordem de \num{1000} --- dominaria
+completamente a métrica, tornando a curtose (ordem de \num{2,7}) irrelevante.
+
+\section{Escolha do algoritmo}
+\label{sec:escolha-algoritmo}
+
+\subsection{Por que dois modelos e não um}
+
+O enunciado pede duas coisas diferentes: \emph{o tipo de defeito} e \emph{as
+ocorrências históricas semelhantes}. São perguntas distintas, e a resposta
+honesta é usar o mecanismo adequado a cada uma.
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{Pergunta do enunciado} & \thd{Mecanismo} & \thd{Por quê}\\
+\midrule
+\enquote{Qual o tipo de defeito?} & Classificador LightGBM &
+  Produz a classe \emph{e} sua probabilidade, permitindo quantificar
+  incerteza~\cite{ke2017lightgbm}.\\
+\zebra \enquote{Quais registros históricos se comportam de forma semelhante?} &
+  Busca de $k$ vizinhos mais próximos &
+  Responde \emph{literalmente} à pergunta, devolvendo os registros reais e não
+  uma abstração de classe~\cite{cover1967nearest}.\\
+\bottomrule
+\end{tabularx}
+
+Um efeito colateral valioso: como os dois mecanismos são independentes, a
+\emph{concordância} entre eles é uma medida de confiança que não custa nada
+calcular (Seção~\ref{sec:confianca}).
+
+\subsection{Por que \textit{gradient boosting} sobre árvores}
+
+A escolha de família de modelo para dado tabular foi feita com base em evidência
+empírica publicada, não por preferência.
+
+\begin{enumerate}
+  \item \textbf{Dado tabular heterogêneo favorece modelos baseados em
+    árvores.} A comparação sistemática de Grinsztajn, Oyallon e
+    Varoquaux~\cite{grinsztajn2022tree} sobre 45 conjuntos de dados mostra que
+    modelos de árvore permanecem no estado da arte em dado tabular de porte
+    médio, mesmo desconsiderando sua vantagem de velocidade. As causas
+    identificadas --- robustez a \textit{features} não informativas,
+    invariância a transformações monotônicas e viés indutivo adequado a
+    fronteiras de decisão não suaves --- descrevem exatamente este problema.
+    Shwartz-Ziv e Armon~\cite{shwartzziv2022tabular} chegam à mesma conclusão
+    em estudo independente.
+
+  \item \textbf{\textit{Boosting} sobre \textit{bagging}.} O
+    \textit{gradient boosting}~\cite{friedman2001greedy} ajusta árvores
+    sequencialmente ao resíduo, o que costuma superar florestas
+    aleatórias~\cite{breiman2001random} em problemas com estrutura de
+    interação entre \textit{features} --- caso aqui, em que a relação entre
+    amplitude e rotação é multiplicativa, não aditiva.
+
+  \item \textbf{LightGBM entre as implementações de \textit{boosting}.}
+    Frente ao XGBoost~\cite{chen2016xgboost}, o LightGBM traz duas
+    otimizações relevantes nesta escala: amostragem por gradiente unilateral,
+    que concentra o esforço nas amostras de maior erro, e agrupamento de
+    \textit{features} mutuamente exclusivas~\cite{ke2017lightgbm}. Em
+    \num{166796} amostras por 23 \textit{features}, o treino completo dos três
+    protocolos de avaliação mais o modelo final leva poucos minutos na estação
+    alvo.
+
+  \item \textbf{Rede neural profunda foi descartada.} Além da evidência dos
+    itens anteriores, o volume de dados por classe (\num{800} eventos na classe
+    minoritária) e a restrição de hardware (\req{RE-01}) não sustentariam o
+    custo de ajuste de hiperparâmetros de uma arquitetura profunda para um
+    ganho que a literatura não prevê.
+\end{enumerate}
+
+\subsection{Hiperparâmetros e sua justificativa}
+
+\begin{table}[H]
+\caption{Hiperparâmetros do classificador}
+\label{tab:hiperparametros}
+\begin{tabularx}{\linewidth}{@{}L{34mm}L{20mm}X@{}}
+\toprule
+\headrow \thd{Parâmetro} & \thd{Valor} & \thd{Justificativa}\\
+\midrule
+\cd{n\_estimators} & 400 & Suficiente para convergir com a taxa de aprendizado
+  escolhida; além disso o ganho é marginal e o artefato cresce.\\
+\zebra \cd{learning\_rate} & 0,08 & Valor conservador: taxas maiores aceleram o
+  treino mas aumentam a variância entre execuções, o que prejudicaria a
+  comparação entre protocolos de avaliação.\\
+\cd{num\_leaves} & 63 & Controla a capacidade. Com 23 \textit{features} e 17
+  classes, valores muito maiores memorizam a campanha de coleta --- efeito
+  agravado pelo confundimento descrito na Seção~\ref{sec:vazamento}.\\
+\zebra \cd{subsample} & 0,9 & Amostragem estocástica de linhas por árvore, para
+  reduzir sobreajuste.\\
+\cd{colsample\_bytree} & 0,9 & Amostragem de colunas por árvore, com o mesmo
+  objetivo.\\
+\zebra \cd{class\_weight} & \cd{balanced} & \textbf{Essencial}: a classe
+  majoritária tem \num{16497} eventos e a minoritária \num{800}. Sem
+  reponderação, o modelo maximizaria acurácia ignorando as classes raras --- e
+  o F1 macro, que é a métrica reportada, penaliza exatamente
+  isso~\cite{sokolova2009systematic}.\\
+\cd{random\_state} & 42 & Reprodutibilidade (\req{RNF-03}).\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Busca por vizinhos}
+
+\begin{itemize}
+  \item $k = 25$ vizinhos, distância euclidiana no espaço padronizado.
+  \item O índice cobre o \textbf{histórico completo} --- \num{166796} eventos ---
+    e não uma amostra. Isso responde ao requisito de forma literal: os vizinhos
+    devolvidos são eventos reais, identificáveis por \cd{id} no banco.
+  \item A escolha de $k = 25$ equilibra dois objetivos: número suficiente para
+    que a fração de concordância seja informativa (com $k=5$, a concordância
+    assume apenas seis valores discretos) e pequeno o bastante para permanecer
+    local no espaço de \textit{features}.
+\end{itemize}
+
+\section{Protocolo de validação}
+\label{sec:validacao}
+
+\subsection{Por que a divisão aleatória seria inválida aqui}
+
+Este é o ponto metodológico central do projeto. O conjunto de dados é composto
+de \textbf{campanhas de coleta}: cada rótulo bruto identifica uma sessão em que
+a bancada foi configurada em determinada condição e leituras foram registradas
+em sequência. Leituras da mesma campanha são quase idênticas.
+
+Uma divisão aleatória colocaria leituras quase duplicadas da mesma campanha em
+treino e em teste, o que constitui vazamento de dados no sentido preciso de
+Kaufman \textit{et al.}~\cite{kaufman2012leakage}: informação indisponível no
+momento da predição real influenciando a estimativa de desempenho. Kapoor e
+Narayanan~\cite{kapoor2023leakage} documentam esse padrão em pelo menos 294
+artigos de 17 disciplinas, e o classificam como a principal causa de resultados
+irreprodutíveis em ciência baseada em aprendizado de máquina.
+
+A literatura de validação para dados com estrutura de agrupamento é explícita
+sobre a correção: quando as observações são agrupadas --- temporal, espacial ou
+hierarquicamente --- a divisão deve ocorrer \emph{no nível do grupo}, não da
+observação~\cite{roberts2017crossvalidation}. Ignorar isso subestima
+sistematicamente o erro de predição.
+
+\subsection{Por que a divisão temporal também não serve}
+
+A alternativa natural --- separar o período final para teste --- é impossível
+aqui: quatro famílias existem \emph{apenas} no período final do histórico. Um
+corte temporal produziria classes presentes no teste e ausentes do treino, o que
+mede outra coisa (adaptação a classes novas), não generalização.
+
+\subsection{Os três protocolos adotados}
+
+\begin{table}[H]
+\caption{Protocolos de avaliação registrados a cada treino}
+\label{tab:protocolos}
+\begin{tabularx}{\linewidth}{@{}L{40mm}L{24mm}X@{}}
+\toprule
+\headrow \thd{Protocolo} & \thd{Papel} & \thd{O que mede}\\
+\midrule
+\textit{Holdout} por sessão de coleta &
+  \textbf{Métrica principal} &
+  Para cada família, cerca de \SI{20}{\percent} das campanhas inteiras vão para
+  o teste. Responde à pergunta de produção: \enquote{o modelo reconhece uma
+  falha conhecida em uma \emph{nova} campanha de coleta?}\\
+\zebra Divisão aleatória estratificada &
+  Referência otimista &
+  Separabilidade dos padrões \emph{dentro} das campanhas. Reportada apenas para
+  quantificar o tamanho do vazamento.\\
+\textit{Holdout} por sessão sem a temperatura &
+  Teste de ablação &
+  Isola o efeito da \textit{feature} mais suspeita de funcionar como carimbo da
+  campanha.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+O modelo final servido --- os artefatos carregados pela API --- é retreinado com
+\SI{100}{\percent} dos dados após as avaliações. Essa separação entre
+\enquote{modelo avaliado} e \enquote{modelo servido} evita o viés otimista de
+selecionar configuração pela métrica de teste e depois reportar essa mesma
+métrica~\cite{varma2006bias}.
+
+\section{Resultados}
+\label{sec:resultados}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  pmxplot,
+  height=6.4cm,
+  ybar,
+  bar width=13pt,
+  ymin=0, ymax=1.0,
+  ylabel={Métrica},
+  symbolic x coords={Holdout por sessão, Divisão aleatória, Sessão sem temp.},
+  xtick=data,
+  xticklabel style={font=\scriptsize, align=center},
+  nodes near coords,
+  every node near coord/.append style={font=\tiny\color{pmxInkSoft},
+    /pgf/number format/fixed, /pgf/number format/precision=3},
+  legend style={at={(0.99,0.97)}, anchor=north east},
+  enlarge x limits=0.22,
+]
+\addplot[fill=pmxBlue, draw=pmxBlueDark] coordinates {
+  (Holdout por sessão, 0.137) (Divisão aleatória, 0.895) (Sessão sem temp., 0.129)};
+\addplot[fill=pmxOrange, draw=pmxOrange!70!black] coordinates {
+  (Holdout por sessão, 0.195) (Divisão aleatória, 0.862) (Sessão sem temp., 0.165)};
+\legend{Acurácia, F1 macro}
+\end{axis}
+\end{tikzpicture}
+\caption[Resultados nos três protocolos]{Resultados nos três protocolos de
+  avaliação, conforme registrado em \arq{artifacts/metrics.json} (treino de
+  22/08/2026, \num{166796} eventos). A distância entre a primeira e a segunda
+  barra --- \num{0,137} contra \num{0,895} de acurácia --- \emph{é} a medida do
+  vazamento por campanha de coleta, não ruído de amostragem.}
+\label{fig:protocolos}
+\end{figure}
+
+\begin{table}[H]
+\caption{Métricas detalhadas por protocolo}
+\label{tab:metricas}
+\begin{tabularx}{\linewidth}{@{}XR{22mm}R{22mm}R{22mm}R{18mm}@{}}
+\toprule
+\headrow \thd{Protocolo} & \thd{Acurácia} & \thd{F1 macro} &
+  \thd{F1 ponderado} & \thd{$n$ teste}\\
+\midrule
+\textit{Holdout} por sessão (principal) & 0,1373 & \textbf{0,1950} & 0,1862 &
+  \num{38233}\\
+\zebra Divisão aleatória estratificada & 0,8950 & 0,8625 & 0,8949 &
+  \num{33360}\\
+\textit{Holdout} por sessão sem temperatura & 0,1289 & 0,1653 & 0,1697 &
+  \num{38233}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Desempenho por classe}
+
+O F1 macro agregado esconde uma distribuição muito desigual. O detalhamento
+mostra o que efetivamente generaliza:
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  pmxplot,
+  height=9.2cm,
+  xbar,
+  bar width=8pt,
+  xmin=0, xmax=1.02,
+  ymin=0.35, ymax=15.65,
+  xlabel={F1 no \textit{holdout} por sessão de coleta},
+  ytick={1,2,3,4,5,6,7,8,9,10,11,12,13,14,15},
+  yticklabels={\texttt{cocked\_rotor}, \texttt{rolamento\_inner},
+    \texttt{eccentric\_rotor}, \texttt{ventoinha}, \texttt{rolamento\_ball},
+    \texttt{rolamento\_combination}, \texttt{desbalanceamento},
+    \texttt{normal}, \texttt{rolamento\_outer}, \texttt{teste},
+    \texttt{polia}, \texttt{desalinhamento}, \texttt{correia},
+    \texttt{motor\_desligado}, \texttt{falta\_fase}},
+  yticklabel style={font=\scriptsize},
+  nodes near coords,
+  every node near coord/.append style={font=\tiny\color{pmxInkSoft},
+    /pgf/number format/fixed, /pgf/number format/precision=3},
+  enlarge y limits=false,
+]
+\addplot[fill=pmxBlueLight, draw=pmxBlue] coordinates {
+  (0.005,1) (0.019,2) (0.037,3) (0.047,4) (0.054,5) (0.070,6)
+  (0.070,7) (0.076,8) (0.130,9) (0.135,10) (0.254,11) (0.261,12) (0.282,13)};
+\addplot[fill=pmxOrange, draw=pmxOrange!70!black] coordinates {
+  (0.546,14) (0.940,15)};
+\end{axis}
+\end{tikzpicture}
+\caption[F1 por classe]{F1 por classe no \textit{holdout} por sessão. Em laranja,
+  as duas classes que efetivamente generalizam. \cd{falta\_fase} tem assinatura
+  elétrica inequívoca; \cd{motor\_desligado} é um estado, não uma falha ---
+  ausência de vibração é trivial de reconhecer. As famílias de rolamento, que
+  são o alvo diagnóstico mais valioso, praticamente não generalizam.}
+\label{fig:f1classe}
+\end{figure}
+
+\section{Diagnóstico do vazamento}
+\label{sec:vazamento}
+
+Uma queda de \num{0,895} para \num{0,137} de acurácia entre protocolos não é um
+resultado que se reporta sem explicação. Esta seção documenta a investigação
+que identificou o mecanismo --- incluindo o ponto em que a hipótese inicial foi
+\emph{refutada}.
+
+\subsection{Hipótese inicial}
+
+A \textit{feature} mais influente do classificador é a temperatura
+(\SI{11.7}{\percent} da importância por ganho). Temperatura ambiente não é
+sintoma mecânico de rotor inclinado. A hipótese formulada foi: a temperatura
+funciona como \textbf{relógio da campanha de coleta}. Cada campanha foi gravada
+em um momento distinto, com temperatura própria; como cada campanha carrega um
+único rótulo, \enquote{temperatura $\approx$ \SI{25.3}{\degreeCelsius}} prediz o
+rótulo sem qualquer conteúdo físico.
+
+\subsection{Teste: decomposição da variância}
+
+A hipótese é verificável. Se a temperatura identifica a campanha, sua dispersão
+\emph{entre} as médias das campanhas deve ser muito maior que a dispersão
+\emph{dentro} de cada campanha.
+
+\begin{table}[H]
+\caption{Decomposição da variância da temperatura (146 campanhas com
+  $\geq 30$ eventos)}
+\label{tab:varianciatemp}
+\begin{tabularx}{\linewidth}{@{}XR{34mm}@{}}
+\toprule
+\headrow \thd{Componente} & \thd{Desvio-padrão}\\
+\midrule
+Entre as médias das campanhas & \SI{2.70}{\degreeCelsius}\\
+\zebra Dentro de cada campanha (mediana) & \SI{0.31}{\degreeCelsius}\\
+\textbf{Razão} & \textbf{8,8$\times$}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+A confirmação direta vem de comparar a \emph{mesma} família em campanhas
+diferentes: \cd{rolamento\_inner} aparece a \SI{19.5}{\degreeCelsius},
+\SI{18.0}{\degreeCelsius} e \SI{25.3}{\degreeCelsius} em três campanhas;
+\cd{cocked\_rotor} a \SI{21.9}{\degreeCelsius}, \SI{22.6}{\degreeCelsius} e
+\SI{26.9}{\degreeCelsius}. A variação entre campanhas da mesma condição é maior
+que a variação entre condições.
+
+\subsection{Ablação: onde a hipótese foi refutada}
+
+Se a temperatura \emph{causasse} o \textit{gap}, removê-la deveria recuperar
+generalização. O treino passou a registrar o protocolo de ablação. O resultado
+contraria a previsão:
+
+\begin{tabularx}{\linewidth}{@{}XR{24mm}R{24mm}@{}}
+\toprule
+\headrow \thd{Protocolo} & \thd{Acurácia} & \thd{F1 macro}\\
+\midrule
+\textit{Holdout} por sessão (completo) & 0,1373 & 0,1950\\
+\zebra \textit{Holdout} por sessão \textbf{sem} temperatura & 0,1289 &
+  \textbf{0,1653}\\
+\bottomrule
+\end{tabularx}
+
+Remover a \textit{feature} \textbf{piorou} o resultado. A \emph{medição} do
+carimbo de campanha permanece válida; a \emph{inferência causal} de que a
+temperatura causa o \textit{gap} estava errada.
+
+\subsection{Por que remover não resolve: o vazamento é sistêmico}
+
+Aplicando a mesma decomposição de variância às 18 grandezas brutas, o quadro
+fica claro:
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  pmxplot,
+  height=8.4cm,
+  xbar,
+  bar width=8pt,
+  xmin=0, xmax=9.8,
+  ymin=0.35, ymax=9.65,
+  xlabel={Razão entre dispersão \emph{entre} campanhas e \emph{dentro} da campanha},
+  ytick={1,2,3,4,5,6,7,8,9},
+  yticklabels={rotação, freq. pico X, vel. RMS Z, acel. HF X, curtose X,
+    acel. pico X, curtose Z, acel. pico Z, \textbf{temperatura}},
+  yticklabel style={font=\scriptsize},
+  nodes near coords,
+  every node near coord/.append style={font=\tiny\color{pmxInkSoft}},
+  enlarge y limits=false,
+  extra x ticks={1.0},
+  extra x tick style={grid=major, grid style={draw=pmxRed, dashed,
+    line width=0.7pt}, tick label style={font=\tiny\color{pmxRed}}},
+  extra x tick labels={1,0},
+]
+\addplot[fill=pmxBlueLight, draw=pmxBlue] coordinates {
+  (0.6,1) (0.7,2) (3.6,3) (4.1,4) (4.1,5) (5.6,6) (5.7,7) (5.7,8)};
+\addplot[fill=pmxRed, draw=pmxRed!70!black] coordinates {(8.8,9)};
+\end{axis}
+\end{tikzpicture}
+\caption[Evidência de vazamento por \textit{feature}]{Razão entre a dispersão
+  \emph{entre} campanhas de coleta e \emph{dentro} de cada campanha, por
+  \textit{feature}. A linha tracejada em \num{1,0} é o limiar: acima dela, a
+  \textit{feature} carrega mais informação sobre \emph{qual campanha} do que
+  sobre \emph{qual condição}. \textbf{Dezesseis das dezoito} grandezas estão
+  acima. A temperatura (em vermelho) é a mais extrema, mas não é a
+  causa --- é o sintoma mais visível.}
+\label{fig:vazamento}
+\end{figure}
+
+\begin{limitacao}
+\textbf{Conclusão revista.} O \textit{gap} de \num{0,89} para \num{0,14} não
+decorre de uma \textit{feature} específica: decorre de cada condição
+experimental ter sido coletada em uma \textbf{única campanha}, o que confunde
+\cd{sessão} com \cd{rótulo} em praticamente todo o espaço de \textit{features}.
+Retirar a \textit{feature} mais extrema apenas faz o modelo migrar para a
+próxima variável \textit{proxy}, e ainda perde o sinal físico legítimo que a
+temperatura carrega --- aquecimento de mancal \emph{é} sintoma real, segundo os
+manuais. Nenhuma seleção de \textit{features} corrige isso: é limitação do
+desenho experimental, e a correção é de \emph{coleta}, não de modelagem.
+\end{limitacao}
+
+\subsection{Mitigações no desenho atual}
+
+Diante desse teto, três decisões de projeto tornam o sistema defensável:
+
+\begin{enumerate}
+  \item \textbf{A busca por similaridade é a resposta operacional principal.}
+    Em vez de \emph{afirmar} uma classe, o sistema mostra ocorrências próximas
+    do histórico completo e deixa a decisão com o técnico. É a saída mais
+    defensável sob esse teto --- e é literalmente o que o enunciado pede.
+  \item \textbf{O gate de confiança sinaliza incerteza} em lugar de afirmar com
+    falsa segurança (Seção~\ref{sec:confianca}).
+  \item \textbf{O painel expõe os três protocolos} e a evidência do vazamento.
+    Um painel que anunciasse apenas os \SI{89}{\percent} da divisão aleatória
+    seria uma promessa que o sistema não cumpre em produção.
+\end{enumerate}
+
+\subsection{Encaminhamentos propostos}
+
+\begin{tabularx}{\linewidth}{@{}L{9mm}X@{}}
+\toprule
+\headrow \thd{\#} & \thd{Encaminhamento}\\
+\midrule
+1 & \textbf{Coletar múltiplas campanhas por condição} --- única correção que
+  ataca a causa. Sem isso, qualquer métrica de generalização fica limitada por
+  construção.\\
+\zebra 2 & \textbf{Normalizar contra a linha de base da própria máquina} em vez
+  de remover \textit{features}: substituir valores absolutos pelo desvio contra
+  a referência recente do equipamento. Essa referência existe em produção, ao
+  contrário da identidade da campanha --- o que remove o deslocamento de sessão
+  preservando o sinal.\\
+3 & Adotar \textit{features} \textbf{invariantes à condição operacional}:
+  razões entre eixos e entre bandas, e a derivada da amplitude em relação a
+  $\omega^2$ (Seção~\ref{sec:fisica}).\\
+\zebra 4 & Com acesso à forma de onda, extrair envelope e espectro --- sem isso
+  as frequências características de rolamento são
+  inalcançáveis~\cite{randall2011tutorial}.\\
+5 & Instrumentar explicabilidade por atribuição de contribuição (por exemplo,
+  valores de Shapley~\cite{lundberg2017shap}) para expor ao técnico
+  \emph{quais} grandezas sustentaram cada diagnóstico --- hoje a interface
+  mostra a importância global, não a local.\\
+\bottomrule
+\end{tabularx}
+
+\section{Gate de confiança}
+\label{sec:confianca}
+
+A confiança combina duas evidências independentes:
+
+\begin{equation}
+  \text{escore} = p(\hat{c} \mid x) \times \frac{1}{k}
+  \sum_{i=1}^{k} \mathbb{1}\!\left[\text{família}(v_i) = \hat{c}\right]
+\end{equation}
+
+em que $p(\hat{c}\mid x)$ é a probabilidade atribuída pelo classificador à
+classe predita e o segundo fator é a fração dos $k=25$ vizinhos que pertencem a
+essa mesma classe. A classificação final segue os limiares:
+
+\begin{tabularx}{\linewidth}{@{}L{26mm}L{30mm}X@{}}
+\toprule
+\headrow \thd{Escore} & \thd{Rótulo} & \thd{Leitura operacional}\\
+\midrule
+$\geq 0{,}70$ & \cd{alta} & Classificador e histórico concordam. O diagnóstico
+  pode orientar intervenção.\\
+\zebra $[0{,}40;\,0{,}70)$ & \cd{media} & Concordância parcial. Vale inspecionar
+  os vizinhos retornados antes de agir.\\
+$< 0{,}40$ & \cd{baixa} & Evidências divergem. A interface sinaliza diagnóstico
+  incerto; a prescrição, quando emitida, deve ser lida como hipótese.\\
+\bottomrule
+\end{tabularx}
+
+\begin{decisao}
+O produto --- e não a média --- é deliberado: ele exige que \emph{ambas} as
+evidências sejam favoráveis. Probabilidade alta com vizinhos discordantes indica
+que o classificador está extrapolando para uma região do espaço pouco povoada,
+e é exatamente o caso em que a resposta merece ressalva.
+\end{decisao}
+
+% ===========================================================================
+\section{Análise exploratória que fundamentou o produto}
+
+As três análises seguintes não são ilustrativas: cada uma alterou uma decisão de
+produto. Todas são reproduzíveis pelos \textit{endpoints} de analítica.
+
+\subsection{A severidade é comparável entre famílias?}
+\label{sec:severidade}
+
+\textbf{Pergunta.} O time de manutenção pergunta \enquote{esta vibração é
+grave?}. A resposta natural seria ordenar as famílias pela velocidade eficaz.
+Isso é válido?
+
+\textbf{Resultado sem condicionar pelo regime de rotação:}
+
+\begin{tabularx}{\linewidth}{@{}XR{28mm}R{22mm}@{}}
+\toprule
+\headrow \thd{Família} & \thd{RMS mediano X (\si{\milli\meter\per\second})} &
+  \thd{p95}\\
+\midrule
+polia & 2,77 & 3,61\\
+\zebra desbalanceamento & 2,56 & 3,98\\
+ventoinha & 2,53 & 4,35\\
+\zebra rolamento\_inner & 2,42 & 3,09\\
+desalinhamento & 2,32 & 3,01\\
+\zebra cocked\_rotor & 2,30 & 3,00\\
+\textbf{normal} & \textbf{2,29} & 3,13\\
+\zebra correia & 2,22 & 2,74\\
+\bottomrule
+\end{tabularx}
+
+\textbf{Achado.} A faixa inteira cabe entre \num{2,2} e
+\SI{2,8}{\milli\meter\per\second}, e o estado \cd{normal} fica \emph{no meio} do
+ranqueamento. Um gráfico de \enquote{severidade por família} com esses números
+afirmaria que operar normalmente é mais grave que uma correia defeituosa. É
+artefato de agregação: as famílias não estão igualmente distribuídas entre os
+regimes de rotação, e a rotação domina a amplitude.
+
+\begin{decisao}
+Nenhum painel de severidade agrega regimes de rotação. Toda leitura é
+estratificada por rotação, e o gráfico oferece a alternativa \textbf{relativa à
+linha de base} --- o estado \cd{normal} do mesmo regime --- que é a única
+comparação com significado físico. As zonas normativas~\cite{iso10816} são
+sobrepostas porque são a linguagem do mantenedor, mas com duas ressalvas
+explícitas: a classe da máquina é selecionável, não fixada; e trata-se de
+bancada com falhas induzidas, operando deliberadamente fora da faixa saudável.
+\end{decisao}
+
+\subsection{Os dados obedecem à física dos manuais?}
+\label{sec:fisica}
+
+\textbf{Pergunta.} O procedimento de desbalanceamento afirma
+$F = m\,r\,\omega^2$: a força cresce com o \emph{quadrado} da rotação. Se os
+dados forem fisicamente coerentes, o desbalanceamento deve escalar com a rotação
+muito mais rápido que as demais falhas. Isso é verificável --- e é um teste de
+sanidade do conjunto de dados inteiro.
+
+\begin{table}[H]
+\caption{Velocidade RMS mediana do desbalanceamento por regime de rotação}
+\label{tab:fisica}
+\begin{tabularx}{\linewidth}{@{}XR{28mm}R{28mm}R{26mm}@{}}
+\toprule
+\headrow \thd{Rotação} & \thd{Desbalanceamento} &
+  \thd{Linha de base (\cd{normal})} & \thd{Severidade relativa}\\
+\midrule
+\SI{500}{rpm} & 2,52 & 2,35 & 1,08$\times$\\
+\zebra \SI{1000}{rpm} & 2,11 & 2,05 & 1,03$\times$\\
+\SI{2000}{rpm} & 3,45 & 2,66 & 1,30$\times$\\
+\zebra \textbf{\SI{3000}{rpm}} & \textbf{7,50} & 2,83 &
+  \textbf{2,65$\times$}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+As demais falhas a \SI{3000}{rpm} ficam entre \num{2,5} e
+\SI{3,4}{\milli\meter\per\second}.
+
+\textbf{Achado.} A previsão do manual se confirma: o desbalanceamento é
+indistinguível do normal em baixa rotação e dispara em alta. Nenhuma outra
+família apresenta esse comportamento.
+
+\begin{decisao}
+Virou painel próprio (\enquote{Validação física}), com as demais famílias em
+cinza como referência. Cumpre dois papéis: valida a qualidade do conjunto de
+dados e demonstra entendimento do domínio, não apenas correlação. A implicação
+diagnóstica, registrada como trabalho futuro: a assinatura útil do
+desbalanceamento não é a amplitude, é a \emph{derivada} da amplitude em relação
+a $\omega^2$ --- uma \textit{feature} do tipo
+$\mathrm{d}(\text{RMS})/\mathrm{d}(\omega^2)$ por máquina provavelmente
+separaria essa falha muito melhor que qualquer indicador instantâneo.
+\end{decisao}
+
+\subsection{O que realmente distingue cada falha?}
+\label{sec:assinaturas}
+
+\textbf{Pergunta.} Os manuais associam falhas a assinaturas específicas ---
+curtose e fator de crista altos para impactos de rolamento, $1\times$ para
+desbalanceamento, $1\times{+}2\times$ para desalinhamento. Essas assinaturas
+aparecem nestes dados?
+
+\textbf{Método.} Duas medidas complementares. A \emph{assinatura} é o escore
+padronizado da média de cada família contra a média global, o que põe grandezas
+de escalas heterogêneas (\si{\degreeCelsius}, $g$,
+\si{\milli\meter\per\second}, \si{\hertz}) na mesma régua. O \emph{poder
+discriminativo} é a razão entre a variância \emph{entre} famílias e a variância
+\emph{dentro} das famílias, no espírito da estatística $F$:
+
+\begin{equation}
+  F = \frac{\sum_i n_i\,(\bar{x}_i - \bar{x})^2 \,/\, (k-1)}
+           {\sum_i (n_i - 1)\,s_i^2 \,/\, (N-k)}
+\end{equation}
+
+\begin{tabularx}{\linewidth}{@{}XR{30mm}@{}}
+\toprule
+\headrow \thd{\textit{Feature}} & \thd{Razão $F$}\\
+\midrule
+velocidade RMS X & \num{1193.6}\\
+\zebra velocidade de pico X & \num{1193.6}\\
+frequência de pico X & \num{1106.8}\\
+\zebra temperatura & \num{885.3}\\
+\ldots & \ldots\\
+\zebra rotação & \num{208.3}\\
+\textbf{curtose Z} & \textbf{\num{189.2}}\\
+\zebra aceleração de pico Z & \num{188.2}\\
+\bottomrule
+\end{tabularx}
+
+\textbf{Três achados.}
+
+\begin{enumerate}
+  \item \textbf{Curtose e fator de crista não discriminam.} A curtose fica entre
+    \num{2,65} e \num{2,75} e o fator de crista entre \num{3,73} e \num{3,85}
+    em \emph{todas} as famílias --- inclusive as de rolamento, justamente onde
+    os manuais previam impactos. Causa provável: as métricas vêm pré-agregadas
+    pelo sensor em janelas longas, que suavizam os impulsos que a curtose
+    deveria capturar.
+  \item \textbf{Velocidade RMS e velocidade de pico em X têm $F$
+    idêntico} (\num{1193.6}): são colineares, porque o pico é aproximadamente o
+    produto do RMS pelo fator de crista, e o fator de crista é quase constante.
+    Uma das duas é redundante.
+  \item \textbf{A frequência de pico é quase degenerada}: \SI{61}{\hertz}
+    responde por \SI{48.7}{\percent} dos registros (\num{81194} de
+    \num{166796}). A \textit{feature} derivada de ordem fica presa em
+    \num{3,66} para quase todas as famílias a \SI{1000}{rpm} --- ou seja, as
+    assinaturas de ordem ($1\times$, $2\times$) dos manuais \textbf{não são
+    recuperáveis} a partir de um único valor de pico. Precisariam do espectro
+    completo.
+\end{enumerate}
+
+\begin{decisao}
+O painel de assinaturas mostra o mapa de calor \textbf{ordenado pelo poder
+discriminativo} e marca em cinza os indicadores fracos, com legenda explicando
+o descompasso frente aos manuais. Esconder isso seria mais bonito e menos
+verdadeiro.
+\end{decisao}
+
+\section{Limitações do componente de aprendizado}
+
+\begin{limitacao}
+\begin{itemize}
+  \item \textbf{Uma única máquina.} Todos os dados vêm de uma bancada; nada foi
+    validado entre equipamentos distintos.
+  \item \textbf{Métricas pré-agregadas.} Sem forma de onda, análise de envelope
+    e frequências características de rolamento são impossíveis.
+  \item \textbf{Rótulos por campanha.} Não há repetição independente da mesma
+    condição em campanhas diferentes para a maioria das famílias --- o teto de
+    generalização é imposto pelo desenho experimental.
+  \item \textbf{Janela curta (47 dias).} Não há tendência de degradação de longo
+    prazo observável; a distribuição temporal reflete o cronograma de ensaios,
+    não a vida do equipamento.
+  \item \textbf{Sem custo por falha.} A priorização documental usa frequência
+    $\times$ severidade vibracional como \textit{proxy}; com custo de parada e
+    criticidade do ativo, ficaria melhor.
+\end{itemize}
+\end{limitacao}

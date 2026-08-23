@@ -1,0 +1,417 @@
+% ===========================================================================
+%  14 — Infraestrutura e implantacao
+% ===========================================================================
+\chapter{Infraestrutura e implantação}
+\label{cap:infraestrutura}
+
+O sistema roda em dois ambientes: a estação de trabalho local, orquestrada por
+\textit{docker-compose}, e a nuvem, declarada em código. Este capítulo
+documenta os dois, as decisões de segurança e o roteiro de operação.
+
+\section{Imagem de contêiner}
+
+Três dos cinco serviços --- API, interface e \textit{worker} --- compartilham
+\textbf{a mesma imagem} (\adrr{ADR-12}). O papel de cada um é definido pelo
+comando de inicialização, não por imagens distintas.
+
+\begin{table}[H]
+\caption{Decisões de construção da imagem}
+\label{tab:imagem}
+\begin{tabularx}{\linewidth}{@{}L{36mm}X@{}}
+\toprule
+\headrow \thd{Decisão} & \thd{Justificativa}\\
+\midrule
+Base \cd{python:3.12-slim} & Reduz a superfície de imagem sem exigir
+  compilação de dependências binárias.\\
+\zebra \cd{libgomp1} instalada explicitamente & O classificador exige a
+  biblioteca de paralelismo em tempo de execução; sem ela a importação falha
+  --- e falha \emph{no primeiro diagnóstico}, não na construção.\\
+Camada de dependências separada da de código & As dependências são instaladas
+  primeiro, a partir de um pacote-esqueleto. Alterar código-fonte não
+  reinstala aproximadamente \SI{1}{\gibi\byte} de dependências a cada
+  implantação.\\
+\zebra Usuário sem privilégios (UID \num{10001}) & O processo do serviço não roda
+  como \textit{root}.\\
+Troca de usuário no \textit{entrypoint} & O volume persistente é montado pelo
+  orquestrador com dono \textit{root}. O \textit{entrypoint} inicia como
+  \textit{root} apenas para ceder o ponto de montagem ao usuário da aplicação e
+  então \textbf{baixa privilégios} antes de executar o comando do serviço. Sem
+  isso, a base vetorial não conseguiria criar o índice.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Ambiente local}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \draw[regiao] (0.4,-0.4) rectangle (16.2,-11.4);
+  \node[c4boundarylbl, fill=pmxSurface] at (0.8,-0.25)
+    {Estação de trabalho --- \textit{docker compose}};
+
+  \node[servico, text width=28mm] (ui) at (3.2,-1.9)
+    {\textbf{ui}\tech{Streamlit}\desc{\cd{:8501}}};
+  \node[servico, text width=32mm] (api) at (8.4,-1.9)
+    {\textbf{api}\tech{Uvicorn}\desc{\cd{:8000}}};
+  \node[servico, text width=28mm] (wk) at (13.4,-1.9)
+    {\textbf{worker}\tech{paho-mqtt}\desc{sem porta}};
+
+  \node[servicobroker, text width=28mm] (mq) at (13.4,-5.3)
+    {\textbf{mosquitto}\tech{Eclipse Mosquitto 2}\desc{\cd{:1883}}};
+  \node[servicoger, text width=28mm] (pg) at (3.2,-5.3)
+    {\textbf{postgres}\tech{PostgreSQL 16}\desc{\cd{:5432}}};
+
+  \node[volume, text width=24mm] (vol1) at (3.2,-9.2)
+    {\textbf{pgdata}\desc{volume nomeado}};
+  \node[volume, text width=24mm] (vol2) at (8.4,-9.2)
+    {\textbf{./data/chroma}\desc{montagem de \textit{host}}};
+  \node[volume, text width=24mm] (vol3) at (13.4,-9.2)
+    {\textbf{./artifacts}\desc{montagem de \textit{host}}};
+
+  \draw[netpriv] (ui) -- (api) node[portlbl, midway, above=1pt]{API\_URL};
+  \draw[netpriv] (wk) -- (api) node[portlbl, midway, above=1pt]{HTTP};
+  \draw[netpriv] (mq) -- (wk) node[portlbl, midway, right=2pt]{MQTT};
+  \draw[netpriv] (api.west) -- (5.0,-1.9) -- (5.0,-4.6) -- (pg.north east)
+    node[portlbl, pos=0.65, right=1pt]{SQLAlchemy};
+  \draw[netpriv] (wk.south west) -- (11.4,-4.6) -- (pg.east)
+    node[portlbl, pos=0.5, above=1pt]{eventos};
+  \draw[netbi] (pg.south) -- (vol1.north);
+  \draw[netbi] (api.south) -- (8.4,-8.4) node[portlbl, pos=0.75, right=2pt]{índice vetorial};
+  \draw[netbi] (13.4,-8.4) -- (vol3.north);
+  \draw[netbi] (api.south east) -- (12.0,-3.5) -- (13.4,-8.4)
+    node[portlbl, pos=0.85, right=2pt]{artefatos};
+
+  \node[externo, text width=26mm] (vx) at (19.6,-1.9)
+    {\textbf{Vertex AI}\desc{HTTPS de saída}};
+  \draw[netpub] (api.north) -- (8.4,-0.9) -- (19.6,-0.9) -- (vx.north)
+    node[portlbl, pos=0.45, above=1pt]{egresso};
+
+\end{tikzpicture}}
+\caption[Implantação local]{Ambiente local orquestrado por
+  \textit{docker-compose}. As portas expostas no \textit{host} permitem
+  inspecionar cada serviço isoladamente; a comunicação entre serviços usa os
+  nomes de rede internos. Os artefatos de ML e o índice vetorial são montagens
+  do \textit{host}, o que permite treinar fora do contêiner e servir dentro
+  dele.}
+\label{fig:infralocal}
+\end{figure}
+
+O arquivo de composição declara dependências com condição de saúde: a API só
+inicia depois de o banco responder à verificação de prontidão, e o
+\textit{worker} só inicia depois da API. Isso elimina a classe de falha em que
+um serviço sobe, encontra a dependência indisponível e entra em laço de
+reinício.
+
+\section{Ambiente em nuvem}
+
+\begin{landscape}
+\begin{figure}[H]
+\centering
+\fitpage{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  % --- lado externo esquerdo
+  \node[c4person, text width=24mm, minimum height=12mm] (usr) at (2.2,-1.2)
+    {\textbf{Usuários}\desc{navegador}};
+  \node[internet] (net) at (2.2,-3.7) {\textbf{Internet}};
+  \node[externo, text width=26mm] (gw) at (2.2,-6.4)
+    {\textbf{\textit{Gateway} IIoT / simulador}\desc{publica telemetria}};
+  \node[externo, text width=26mm] (gh) at (2.2,-9.6)
+    {\textbf{Repositório Git}\desc{\textit{push} em \cd{main}}};
+
+  % --- projeto em nuvem
+  \draw[nuvem] (5.2,-0.6) rectangle (18.6,-12.4);
+  \node[nuvemlbl] at (5.6,-0.45) {Projeto em nuvem --- região \cd{us-east4}};
+
+  \node[servico, text width=30mm] (ui) at (8.8,-2.6)
+    {\textbf{ui}\tech{Streamlit}\desc{grupo \enquote{Aplicação}}};
+  \node[servico, text width=30mm, minimum height=15mm] (api) at (8.8,-6.0)
+    {\textbf{api}\tech{FastAPI}\desc{grupo \enquote{Aplicação} \\ $\sim$\SI{1}{\gibi\byte} RAM}};
+  \node[volume, text width=26mm] (vol) at (8.8,-9.8)
+    {\textbf{volume \cd{chroma}}\desc{\SI{1}{\gibi\byte}}};
+
+  \node[servicobroker, text width=30mm] (mq) at (14.6,-2.6)
+    {\textbf{mosquitto}\tech{Mosquitto 2}\desc{grupo \enquote{Ingestão}}};
+  \node[servico, text width=30mm] (wk) at (14.6,-6.0)
+    {\textbf{worker}\tech{paho-mqtt}\desc{grupo \enquote{Ingestão}}};
+  \node[servicoger, text width=30mm] (pg) at (14.6,-9.8)
+    {\textbf{postgres}\tech{plugin gerenciado}\desc{domínio + esquema \cd{adk}}};
+
+  % --- externo direito
+  \node[externo, text width=26mm] (vx) at (21.6,-4.1)
+    {\textbf{Vertex AI}\desc{Gemini --- endpoint \cd{global}}};
+
+  % --- ligações públicas
+  \draw[netpub] (usr) -- (net);
+  \draw[netpub] (gw.north) -- (2.2,-4.7)
+    node[portlbl, pos=0.5, right=2pt]{MQTT};
+  \draw[netpub] (net.east) -- (ui.west)
+    node[portlbl, midway, above=1pt]{HTTPS};
+  \draw[netpub] (3.7,-4.0) -- (api.west)
+    node[portlbl, pos=0.62, below=1pt]{HTTPS};
+  \draw[netpub] (3.6,-3.0) -- (3.6,-1.3) -- (14.6,-1.3) -- (mq.north)
+    node[portlbl, pos=0.55, above=1pt]{\textit{proxy} TCP \cd{:1883}};
+
+  % --- rede privada
+  \draw[netpriv] (ui.south) -- (api.north)
+    node[portlbl, midway, right=2pt]{rede privada};
+  \draw[netpriv] (wk.west) -- (api.east)
+    node[portlbl, midway, above=1pt]{rede privada};
+  \draw[netpriv] (mq.south) -- (wk.north)
+    node[portlbl, midway, right=2pt]{MQTT interno};
+  \draw[netpriv] (wk.south) -- (14.6,-9.1)
+    node[portlbl, pos=0.6, right=2pt]{eventos};
+  \draw[netpriv] (9.8,-6.8) -- (9.8,-8.4) -- (14.6,-8.4) -- (14.6,-9.05)
+    node[portlbl, pos=0.42, above=1pt]{\cd{DATABASE\_URL} privada};
+  \draw[netbi] (api.south) -- (8.8,-9.05)
+    node[portlbl, pos=0.55, left=2pt]{montagem \cd{/app/data/chroma}};
+  \draw[netpub] (10.4,-5.5) -- (12.0,-5.5) -- (12.0,-4.1) -- (vx.west)
+    node[portlbl, pos=0.72, above=1pt]{egresso HTTPS};
+
+  % --- construção automática
+  \draw[c4reldash] (gh.east) -- (6.4,-9.6) -- (6.4,-2.6) -- (ui.west);
+  \draw[c4reldash] (6.4,-6.0) -- (api.west)
+    node[portlbl, pos=0.3, below=1pt]{\textit{build} após CI};
+  \draw[c4reldash] (6.4,-11.7) -- (17.6,-11.7) -- (17.6,-6.0) -- (wk.east);
+
+\end{tikzpicture}}
+\caption[Implantação em nuvem]{Implantação em nuvem. Em verde, a rede privada:
+  interface, \textit{worker} e API conversam por domínio interno, sem egresso e
+  sem exposição à internet. Em laranja, o que é público por necessidade: os dois
+  domínios HTTPS, o \textit{proxy} TCP do \textit{broker} e o egresso para o
+  serviço de linguagem. Em tracejado, a construção automática de imagem
+  disparada por \textit{push}, condicionada à aprovação do CI.}
+\label{fig:infranuvem}
+\end{figure}
+\end{landscape}
+
+\subsection{Topologia declarada}
+
+\begin{table}[H]
+\caption{Serviços em nuvem}
+\label{tab:servicosnuvem}
+\begin{tabularx}{\linewidth}{@{}L{20mm}L{30mm}XL{22mm}@{}}
+\toprule
+\headrow \thd{Serviço} & \thd{Origem} & \thd{Papel} & \thd{Exposição}\\
+\midrule
+\cd{postgres} & Plugin gerenciado & Histórico de eventos e memória de conversa
+  do agente & Interna\\
+\zebra \cd{api} & \arq{Dockerfile} da raiz & API, motor de ML e recuperação
+  documental; monta o volume do índice & HTTPS público\\
+\cd{ui} & \arq{Dockerfile} da raiz & Interface; consome a API pela rede privada
+  & HTTPS público\\
+\zebra \cd{worker} & \arq{Dockerfile} da raiz & Ingestão MQTT $\rightarrow$
+  banco $\rightarrow$ diagnóstico $\rightarrow$ alertas & Nenhuma\\
+\cd{mosquitto} & \arq{mosquitto/Dockerfile} & \textit{Broker} com autenticação
+  obrigatória & \textit{Proxy} TCP\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Decisões de infraestrutura}
+
+\begin{table}[H]
+\caption{Decisões de infraestrutura em nuvem}
+\label{tab:decisoesinfra}
+\begin{tabularx}{\linewidth}{@{}L{40mm}X@{}}
+\toprule
+\headrow \thd{Decisão} & \thd{Justificativa}\\
+\midrule
+Rede privada entre serviços & O endereço da API para a interface e para o
+  \textit{worker} aponta para o domínio \emph{interno}, não para o público. Isso
+  evita egresso cobrado, reduz latência e mantém o tráfego fora da
+  internet.\\
+\zebra Volume persistente para o índice vetorial & O sistema de arquivos do
+  contêiner é efêmero. Sem o volume, cada nova implantação apagaria os 268
+  \textit{chunks} indexados \emph{e} todo documento cadastrado pela interface.
+  Volumes pertencem a um único serviço --- só a API toca a base vetorial,
+  portanto a restrição não atrapalha.\\
+Região do volume fixada explicitamente & Omitir a região faria o planejamento
+  zerar a região do volume existente, o que é operação \textbf{destrutiva}.\\
+\zebra Porta declarada como variável & A porta injetada em tempo de execução não
+  é referenciável entre serviços; declará-la explicitamente permite que a
+  interface e o \textit{worker} componham o endereço interno da API.\\
+Comando envolvido em \textit{shell} & O orquestrador executa o comando de
+  inicialização diretamente, sem \textit{shell}; sem o invólucro, a variável de
+  porta não seria expandida.\\
+\zebra Publicação condicionada ao CI & A construção de imagem só ocorre após a
+  aprovação do fluxo de integração contínua --- código que não passa no
+  \textit{lint} ou nos testes não chega a ser implantado.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Extrato da declaração}
+
+\begin{lstlisting}[language=tspmx, caption={Extrato de \arq{.railway/railway.ts} --- serviço de API com volume e segredos preservados}, label={lst:iac}]
+const api = service("api", {
+  source: github(REPO, SOURCE),
+  // Envolvido em `sh -c` de proposito: o orquestrador executa o start command
+  // diretamente (sem shell), entao $PORT nao seria expandido.
+  start: 'sh -c "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"',
+  env: {
+    PORT: "8000",                       // declarado para ser referenciavel
+    DATABASE_URL: db.env.DATABASE_URL,  // referencia ao plugin gerenciado
+    GOOGLE_CLOUD_PROJECT: "manutencao-prescritiva",
+    GOOGLE_CLOUD_LOCATION: "global",
+    GOOGLE_CREDENTIALS_B64: preserve(), // nome versionado, valor nunca
+    GEMINI_CHAT_MODEL: "gemini-3.6-flash",
+    GEMINI_EMBEDDING_MODEL: "gemini-embedding-2",
+    EMBEDDING_DIM: "768",
+    ARTIFACTS_DIR: "/app/artifacts",
+    CHROMA_DIR: "/app/data/chroma",
+    DOCS_DIR: "/app/documentos",
+    RAG_BOOTSTRAP: "true",              // indexa no primeiro boot
+    MQTT_HOST: mosquitto.env.RAILWAY_PRIVATE_DOMAIN,
+  },
+  volumeMounts: {
+    // A regiao e fixada: omiti-la zeraria a regiao do volume existente,
+    // o que e uma operacao destrutiva.
+    "/app/data/chroma": volume("chroma", { sizeMB: 1024, region: "us-east4-eqdc4a" }),
+  },
+});
+\end{lstlisting}
+
+\section{Gestão de segredos}
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}X@{}}
+\toprule
+\headrow \thd{Segredo} & \thd{Tratamento}\\
+\midrule
+Credencial do serviço de nuvem & Transportada em base64 em variável de
+  ambiente. Na inicialização é decodificada, validada como JSON e escrita em
+  arquivo temporário com permissão \cd{0600}. \textbf{O arquivo nunca entra no
+  repositório nem na imagem.} Conteúdo inválido é registrado como erro e o
+  serviço de linguagem fica indisponível --- sem interromper o restante.\\
+\zebra Usuário e senha do \textit{broker} & Definidos como variáveis do serviço.
+  A configuração do \textit{broker} é gerada no \textit{boot}; sem credenciais,
+  registra advertência e só então cai em modo anônimo.\\
+Credencial do banco & Referência direta ao plugin gerenciado --- o valor nunca
+  transita pelo arquivo de declaração.\\
+\zebra Declaração em código & Variáveis sensíveis usam o marcador de
+  preservação: o \emph{nome} é versionado, o \emph{valor} nunca. Isso mantém a
+  declaração auditável sem expor segredo.\\
+Definição por entrada padrão & Segredos são definidos por \textit{pipe} da
+  entrada padrão, não como argumento de linha de comando --- o que evita que
+  fiquem no histórico do \textit{shell}.\\
+\bottomrule
+\end{tabularx}
+
+\section{Carga inicial em ambiente novo}
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}X@{}}
+\toprule
+\headrow \thd{Dado} & \thd{Como é carregado}\\
+\midrule
+Histórico (\num{166796} eventos) & Da máquina local, apontando para o banco
+  remoto. O arquivo de \SI{31}{\mega\byte} não precisa ir para a imagem nem para
+  o repositório.\\
+\zebra Artefatos de ML (\SI{74}{\mebi\byte}) & Copiados para a imagem em tempo
+  de construção. São determinísticos e versionados junto ao código que os
+  produziu.\\
+Base documental & \textbf{Não exige passo manual}: a API detecta o índice vazio
+  no \textit{startup} e indexa os PDFs sozinha, em \textit{thread} separada
+  (\req{AT-10}).\\
+\bottomrule
+\end{tabularx}
+
+\begin{decisao}
+A indexação automática existe por uma razão prática: o volume nasce vazio e não
+há \textit{shell} dentro do contêiner para executar o \textit{script} de
+ingestão. A alternativa --- exigir um passo manual --- transformaria cada nova
+implantação em procedimento com etapa esquecível, e o sintoma do esquecimento
+seria o sistema afirmar que \emph{nenhuma} falha está documentada.
+\end{decisao}
+
+\section{Verificação pós-implantação}
+\label{sec:verificacaodeploy}
+
+\begin{lstlisting}[language=bash, caption={Roteiro de verificação pós-implantação}, label={lst:verifdeploy}]
+# 1. Saude: artefatos carregados e familias documentadas
+curl -s https://<api>/api/v1/health | jq
+
+# 2. Diagnostico de ponta a ponta com o evento do enunciado
+curl -s -X POST https://<api>/api/v1/diagnose \
+     -H 'Content-Type: application/json' -d @evento.json \
+  | jq '.predicted_fault, .probability, .documented, .similar_events.count'
+
+# 3. Acompanhar a indexacao inicial (leva minutos por causa do OCR)
+railway logs --service api | grep bootstrap
+
+# 4. Interface e broker
+curl -s -o /dev/null -w '%{http_code}\n' https://<ui>/
+mosquitto_pub -h <host-proxy> -p <porta> -u "$MQTT_USERNAME" -P "$MQTT_PASSWORD" \
+              -t 'sensors/maquina-01/telemetry' -m "$(cat evento.json)"
+\end{lstlisting}
+
+\begin{tabularx}{\linewidth}{@{}L{9mm}L{34mm}X@{}}
+\toprule
+\headrow \thd{\#} & \thd{Verificação} & \thd{Critério de aprovação}\\
+\midrule
+1 & Saúde & \cd{artifacts\_loaded=true}. O campo
+  \cd{documented\_families} só vem preenchido \emph{após} a indexação inicial
+  --- lista vazia no primeiro minuto é estado esperado, não falha.\\
+\zebra 2 & Diagnóstico & Família prevista coerente, probabilidade acima de
+  \num{0,9} para o evento do enunciado, \cd{documented=true} e contagem de
+  ocorrências semelhantes na ordem de \num{14000}.\\
+3 & Indexação inicial & Linhas de \textit{log} com a contagem de
+  \textit{chunks} por documento, até a mensagem de conclusão.\\
+\zebra 4 & Interface e \textit{broker} & Interface responde \cd{200};
+  publicação no \textit{broker} aceita a autenticação e o \textit{worker}
+  registra a persistência do evento.\\
+\bottomrule
+\end{tabularx}
+
+\section{Operação}
+
+\begin{tabularx}{\linewidth}{@{}L{44mm}X@{}}
+\toprule
+\headrow \thd{Objetivo} & \thd{Comando}\\
+\midrule
+\textit{Logs} de execução & \cd{railway logs --service api --lines 100}\\
+\zebra Histórico de implantações & \cd{railway deployment list --service api}\\
+Reimplantar sem reconstruir & \cd{railway redeploy --service api}\\
+\zebra Variáveis efetivas & \cd{railway variable list --service api}\\
+Visão do projeto & \cd{railway status}\\
+\zebra Planejar mudança de topologia & \cd{railway config plan}\\
+Aplicar mudança de topologia & \cd{railway config apply}\\
+\bottomrule
+\end{tabularx}
+
+\section{Custo e topologia reduzida}
+
+Cinco serviços ativos continuamente excedem o crédito de planos de entrada. A
+API é o serviço mais pesado: carrega \SI{74}{\mebi\byte} de artefatos e mantém o
+índice de vizinhos em memória, o que resulta em aproximadamente
+\SI{1}{\gibi\byte} de RAM.
+
+\begin{tabularx}{\linewidth}{@{}L{44mm}X@{}}
+\toprule
+\headrow \thd{Topologia} & \thd{Capacidades entregues}\\
+\midrule
+\textbf{Reduzida} --- banco, API e interface & Diagnóstico, quantificação
+  histórica, prescrição documental, conversa com agente e todos os painéis
+  analíticos. \textbf{Atende integralmente ao enunciado.}\\
+\zebra \textbf{Completa} --- acrescenta \textit{worker} e \textit{broker} &
+  Demonstra a integração industrial de ponta a ponta. Pode ser mantida apenas
+  localmente, via composição de contêineres.\\
+\bottomrule
+\end{tabularx}
+
+\section{Adequação à restrição de hardware}
+
+A estação de trabalho alvo (\SI{32}{\gibi\byte} de RAM, GPU de
+\SI{16}{\gibi\byte}) executa a solução com folga (\req{RE-01}):
+
+\begin{itemize}
+  \item Artefatos de ML somam \SI{74}{\mebi\byte} em disco; em memória, o
+    componente dominante é o índice de vizinhos.
+  \item A base vetorial local contém centenas de \textit{chunks} --- ordens de
+    magnitude abaixo do que exigiria um servidor vetorial dedicado.
+  \item Os modelos pesados --- linguagem e \textit{embeddings} --- rodam como
+    serviço gerenciado. \textbf{Nenhuma inferência local de modelo de linguagem
+    é necessária}, e a GPU permanece integralmente disponível.
+\end{itemize}

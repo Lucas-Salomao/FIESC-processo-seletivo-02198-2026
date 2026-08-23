@@ -39,3 +39,18 @@ node_modules/
 
 # Scaffolding de ferramentas de IA (gerado pelo CLI, não é código do projeto)
 .agents/
+
+# LaTeX: arquivos auxiliares da compilacao (o PDF gerado e versionado)
+latex/*.aux
+latex/*.bbl
+latex/*.bcf
+latex/*.blg
+latex/*.lof
+latex/*.lot
+latex/*.out
+latex/*.run.xml
+latex/*.toc
+latex/*.synctex.gz
+latex/*.fls
+latex/*.fdb_latexmk
+latex/build/

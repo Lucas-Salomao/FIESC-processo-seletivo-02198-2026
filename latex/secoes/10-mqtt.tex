@@ -1,0 +1,209 @@
+% ===========================================================================
+%  10 — Integracao industrial
+% ===========================================================================
+\chapter{Integração industrial por MQTT}
+\label{cap:mqtt}
+
+Um sistema de manutenção que só responde a requisições HTTP disparadas por
+pessoas resolve metade do problema. No chão de fábrica, o dado nasce em um
+sensor e precisa chegar ao diagnóstico sem intervenção humana --- e o
+diagnóstico precisa voltar à planta em um formato que o supervisório entenda.
+Este capítulo documenta esse ciclo.
+
+\section{Escolha do protocolo}
+
+MQTT é o protocolo de publicação e subscrição de fato em telemetria
+industrial~\cite{oasis2019mqtt}: cabeçalho mínimo, tolerância a rede instável,
+desacoplamento entre produtor e consumidor e níveis de garantia de entrega
+selecionáveis. O sistema o adota tanto para \emph{entrada} de telemetria quanto
+para \emph{saída} de alertas, o que fecha o ciclo pelo mesmo canal
+(\adrr{ADR-10}).
+
+\begin{nota}
+OPC UA seria a escolha para comunicação direta com controladores lógicos
+programáveis, e Sparkplug B para padronizar a semântica da carga útil. Ambos
+estão registrados como evolução (Seção~\ref{sec:roadmap}): o custo de instalação
+não se justificaria para demonstrar o ciclo, que MQTT demonstra integralmente.
+\end{nota}
+
+\section{Topologia de tópicos}
+
+\begin{table}[H]
+\caption{Tópicos MQTT}
+\label{tab:topicos}
+\begin{tabularx}{\linewidth}{@{}L{44mm}L{18mm}X@{}}
+\toprule
+\headrow \thd{Tópico} & \thd{Direção} & \thd{Conteúdo}\\
+\midrule
+\cd{sensors/\{maquina\}/telemetry} & entrada &
+  Evento de sensor no \emph{mesmo} formato JSON aceito pela API. Assinado pelo
+  \textit{worker} com curinga: \cd{sensors/+/telemetry}.\\
+\zebra \cd{sensors/\{maquina\}/alerts} & saída &
+  Diagnóstico de falha: identificador do evento e da máquina, família prevista,
+  probabilidade, confiança, indicação de cobertura documental e
+  \textit{timestamp}.\\
+\cd{sensors/\{maquina\}/dlq} & saída &
+  \textit{Payload} rejeitado, com motivo da rejeição (até \num{2000}
+  caracteres), conteúdo original (até \num{5000}) e \textit{timestamp}.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+O identificador da máquina é extraído do próprio tópico, o que permite atender
+múltiplos equipamentos sem alterar o \textit{payload} nem a configuração ---
+basta o \textit{gateway} publicar no tópico correspondente.
+
+\section{Fluxo de ingestão}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \raia{1.8}{-11.4}{Simulador ou \textit{gateway}}{publicador}
+  \raia{5.8}{-11.4}{\textit{Broker}}{Mosquitto}
+  \raia{9.8}{-11.4}{\textit{Worker}}{paho-mqtt}
+  \raia{13.8}{-11.4}{PostgreSQL}{histórico}
+  \raiaext{18.0}{-11.4}{API}{\cd{POST /diagnose}}
+
+  \msgs{1.8}{5.8}{-1.1}{\cd{publish sensors/maquina-01/telemetry} (QoS 1)}
+  \msgs{5.8}{9.8}{-1.8}{entrega ao assinante de \cd{sensors/+/telemetry}}
+  \msgself{9.8}{-2.45}{valida com o esquema \emph{único} \cd{SensorEvent}}
+
+  % --- bloco alternativo
+  \draw[seqframe] (5.0,-3.4) rectangle (20.0,-10.6);
+  \node[seqframelbl] at (5.0,-3.4) {alt};
+  \draw[seqframe] (5.0,-8.5) -- (20.0,-8.5);
+  \node[seqcond] at (6.1,-3.70) {[\textit{payload} válido]};
+  \node[seqcond] at (6.1,-8.80) {[\textit{payload} inválido]};
+
+  \msgself{9.8}{-4.35}{canonicaliza a anotação de falha, se houver}
+  \msgs{9.8}{13.8}{-5.15}{\cd{session.merge(Event)} --- idempotente por
+    chave primária}
+  \msgs{9.8}{18.0}{-5.9}{\cd{POST /api/v1/diagnose}}
+  \msgr{18.0}{9.8}{-6.6}{diagnóstico completo}
+  \msgs{9.8}{5.8}{-7.35}{\cd{publish .../alerts} (somente se for falha)}
+  \msgs{5.8}{1.8}{-8.05}{entrega ao SCADA / CMMS assinante}
+
+  \msgs{9.8}{5.8}{-9.55}{\cd{publish .../dlq} com motivo e \textit{payload}}
+  \node[cxlabel, text width=48mm, anchor=west, fill=pmxOrangeWash,
+        draw=pmxOrange, line width=0.6pt] at (11.4,-10.05)
+    {Nada é gravado no banco. O dado permanece recuperável na fila de
+     rejeição.};
+
+  \msgs{9.8}{9.8}{-11.15}{}
+  \node[cxlabel, anchor=west] at (10.2,-11.15)
+    {o laço continua consumindo --- uma mensagem inválida não interrompe a
+     ingestão};
+
+\end{tikzpicture}}
+\caption[Sequência da ingestão MQTT]{Diagrama de sequência da ingestão
+  industrial. A persistência precede o diagnóstico: se a API estiver
+  indisponível, o evento já está no histórico e pode ser rediagnosticado
+  depois --- perder o diagnóstico é recuperável, perder o dado não é.}
+\label{fig:seqmqtt}
+\end{figure}
+
+\section{Garantias de entrega e processamento}
+
+\begin{table}[H]
+\caption{Garantias da ingestão industrial}
+\label{tab:garantias}
+\begin{tabularx}{\linewidth}{@{}L{34mm}X@{}}
+\toprule
+\headrow \thd{Garantia} & \thd{Mecanismo e consequência}\\
+\midrule
+Nenhuma perda & QoS 1 (\textit{at-least-once}) na subscrição e nas
+  publicações. O \textit{broker} retransmite até confirmar.\\
+\zebra Nenhuma duplicata & A chave primária de \cd{events} é o identificador de
+  origem, e a persistência usa \cd{merge}. Reentrega da mesma mensagem atualiza
+  a linha existente em vez de criar outra. É a contrapartida obrigatória de
+  QoS 1: garantia \textit{at-least-once} no transporte exige idempotência no
+  consumidor.\\
+Nenhum descarte silencioso & \textit{Payload} inválido vai para a fila de
+  rejeição com o motivo. O problema fica visível e o dado recuperável.\\
+\zebra Validação única & O \textit{worker} usa o \emph{mesmo} esquema pydantic
+  da API. É impossível um \textit{payload} ser aceito por um caminho e rejeitado
+  pelo outro.\\
+Tolerância a rótulo desconhecido & Diferente do ETL em lote, aqui um rótulo sem
+  regra gera advertência em \textit{log} e o evento é persistido \emph{sem}
+  família. Em ingestão contínua, perder o dado seria pior que perder o
+  rótulo.\\
+\zebra Continuidade & Falha de diagnóstico registra erro e o laço prossegue. Um
+  evento problemático não interrompe a ingestão dos seguintes.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{decisao}
+A assimetria no tratamento de rótulo desconhecido --- interromper no ETL,
+tolerar no \textit{worker} --- é deliberada e reflete a diferença de contexto.
+No ETL há um operador presente que pode corrigir a regra e reexecutar; a
+integridade da base é o valor a proteger. Na ingestão contínua não há operador,
+e o dado bruto de vibração tem valor independentemente da anotação --- que, em
+produção, normalmente não existe.
+\end{decisao}
+
+\section{Segurança do \textit{broker}}
+
+Um \textit{broker} MQTT anônimo exposto à internet é varrido e abusado em
+questão de horas. A configuração é gerada em tempo de execução a partir de
+variáveis de ambiente:
+
+\begin{itemize}
+  \item Com usuário e senha definidos: gera o arquivo de senhas, ajusta dono e
+    permissão para \cd{0600}, e escreve \cd{allow\_anonymous false}.
+  \item Sem credenciais: registra advertência explícita em \textit{log} e só
+    então cai em modo anônimo --- aceitável apenas quando o \textit{broker} não
+    está exposto.
+\end{itemize}
+
+A geração em \textit{runtime} tem uma consequência de segurança relevante: as
+credenciais nunca entram na imagem de contêiner nem no repositório
+(\req{RNF-05}). A evolução natural é habilitar TLS, registrada na
+Seção~\ref{sec:roadmap}.
+
+\section{Demonstração e verificação}
+\label{sec:demonstracao}
+
+O simulador reproduz o comportamento de um \textit{gateway} de aquisição
+publicando eventos \emph{reais} do conjunto de dados --- não sintéticos.
+
+\begin{lstlisting}[language=bash, caption={Roteiro de verificação da ingestão industrial}, label={lst:demomqtt}]
+# 1. Infraestrutura local
+docker compose up -d postgres mosquitto
+
+# 2. Worker de ingestao (em outro terminal)
+python -m src.ingestion.mqtt_worker
+
+# 3. Replay de 5 eventos reais da familia cocked_rotor, 1 a cada 2 s
+python scripts/simulate_sensor.py --family cocked_rotor --limit 5 --rate 2
+
+# 4. Demonstracao da fila de rejeicao: publica um payload invalido
+python scripts/simulate_sensor.py --invalid
+
+# 5. Observar os topicos de saida
+mosquitto_sub -h localhost -t 'sensors/+/alerts' -t 'sensors/+/dlq' -v
+\end{lstlisting}
+
+\begin{table}[H]
+\caption{Resultado esperado da verificação}
+\label{tab:verifmqtt}
+\begin{tabularx}{\linewidth}{@{}L{12mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{Passo} & \thd{Observável} & \thd{Critério}\\
+\midrule
+3 & \textit{Log} do \textit{worker} & Cinco linhas de evento persistido e, para
+  as falhas, uma linha de alerta publicado.\\
+\zebra 3 & Tópico de alertas & Cinco mensagens JSON com família, probabilidade,
+  confiança e indicação de cobertura.\\
+3 & Painel da interface & Os eventos aparecem nas agregações sem recarregar a
+  aplicação --- as consultas são executadas sob demanda.\\
+\zebra 4 & Tópico de rejeição & Uma mensagem com o motivo da falha de validação
+  e o \textit{payload} original.\\
+4 & Banco de dados & Nenhuma linha nova em \cd{events}.\\
+\zebra 3, repetido & Banco de dados & Republicar os mesmos cinco eventos não
+  altera a contagem de linhas --- comprovação da idempotência.\\
+\bottomrule
+\end{tabularx}
+\end{table}

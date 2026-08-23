@@ -1,0 +1,153 @@
+% ===========================================================================
+%  17 — Riscos e evolucao
+% ===========================================================================
+\chapter{Riscos e plano de evolução}
+\label{cap:riscos}
+
+\section{Matriz de riscos}
+
+Cada risco está registrado com probabilidade, impacto, a mitigação já
+implementada e a ação recomendada. A honestidade aqui é deliberada: os dois
+riscos de severidade mais alta são \emph{conhecidos e não resolvidos}, e ambos
+decorrem de limitações do dado, não de escolhas de engenharia.
+
+\begin{table}[H]
+\caption{Matriz de riscos}
+\label{tab:riscos}
+\begin{tabularx}{\linewidth}{@{}L{12mm}L{34mm}L{13mm}L{13mm}X@{}}
+\toprule
+\headrow \thd{ID} & \thd{Risco} & \thd{Prob.} & \thd{Impacto} &
+  \thd{Mitigação atual e ação recomendada}\\
+\midrule
+\endhead
+\req{RI-01} & O classificador não generaliza para novas campanhas de coleta
+  ($\text{F1} = 0{,}195$) & Alta & Alto &
+  \textbf{Mitigado, não resolvido.} A busca por similaridade é a resposta
+  operacional principal; o gate de confiança sinaliza incerteza; o painel expõe
+  os três protocolos. \textbf{Ação:} coletar múltiplas campanhas por condição
+  (Seção~\ref{sec:vazamento}).\\
+\zebra \req{RI-02} & Ausência da forma de onda impede as assinaturas espectrais
+  de rolamento & Alta & Alto &
+  \textbf{Não mitigável com o dado atual.} As \textit{features} derivadas
+  aproximam o que é possível. \textbf{Ação:} negociar acesso ao sinal bruto do
+  sensor.\\
+\req{RI-03} & Indisponibilidade do serviço de linguagem & Média & Médio &
+  Diagnóstico e quantificação seguem funcionando; a conversa degrada para RAG de
+  um passo; a mensagem de erro é acionável. \textbf{Ação:} avaliar
+  \textit{cache} de prescrições por família.\\
+\zebra \req{RI-04} & Perda do índice vetorial em nova implantação & Baixa & Alto
+  & Volume persistente dedicado \emph{e} indexação automática quando o índice
+  está vazio. \textbf{Ação:} incluir a contagem de \textit{chunks} em
+  monitoramento ativo.\\
+\req{RI-05} & \textit{Broker} exposto sem autenticação & Baixa & Alto &
+  Autenticação obrigatória quando as credenciais existem; advertência explícita
+  em \textit{log} quando não. \textbf{Ação:} habilitar TLS e tornar a
+  autenticação incondicional em produção.\\
+\zebra \req{RI-06} & Ausência de autenticação de usuário na interface e na API &
+  Média & Médio &
+  Fora do escopo acordado. \textbf{Ação:} autenticação com perfis (leitura,
+  operação, curadoria documental) antes de qualquer uso produtivo.\\
+\req{RI-07} & Custo de nuvem excede o crédito disponível & Alta & Baixo &
+  Topologia reduzível a três serviços sem perda de capacidade exigida.
+  \textbf{Ação:} manter o par de ingestão industrial apenas localmente.\\
+\zebra \req{RI-08} & Prescrição gerada contém passo perigoso & Baixa & Alto &
+  Contexto fechado com citação verificável; a instrução de sistema exige a seção
+  de segurança primeiro. \textbf{Ação:} revisão humana obrigatória de prescrição
+  para intervenção de risco --- o sistema é apoio à decisão, não autoridade.\\
+\req{RI-09} & Rótulo novo em carga futura interrompe o ETL & Média & Baixo &
+  \textbf{Comportamento desejado}, não defeito: a interrupção é a porta de
+  qualidade. \textbf{Ação:} manter o procedimento de curadoria documentado.\\
+\zebra \req{RI-10} & Deriva de conceito --- a bancada não representa a planta &
+  Alta & Médio &
+  Reconhecido explicitamente. \textbf{Ação:} recalibrar contra a linha de base
+  de cada equipamento real antes de uso produtivo.\\
+\req{RI-11} & Divergência entre transformação de treino e de inferência & Baixa
+  & Alto & Estruturalmente impossível: uma única função compartilhada. Nenhuma
+  ação adicional.\\
+\zebra \req{RI-12} & Duplicação de eventos por reentrega MQTT & Média & Baixo &
+  Estruturalmente impossível: fusão pela chave primária de origem. Nenhuma ação
+  adicional.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Plano de evolução}
+\label{sec:roadmap}
+
+\subsection{Curto prazo --- dados e modelo}
+
+\begin{enumerate}
+  \item \textbf{Coletar múltiplas campanhas por condição.} É a única ação que
+    ataca a causa de \req{RI-01}. Sem ela, qualquer métrica de generalização
+    permanece limitada por construção.
+  \item \textbf{Normalizar contra a linha de base do próprio equipamento.}
+    Substituir valores absolutos pelo desvio contra a referência recente da
+    máquina. A referência existe em produção --- ao contrário da identidade da
+    campanha --- de modo que a transformação remove o deslocamento de sessão
+    preservando o sinal físico.
+  \item \textbf{Adotar \textit{features} invariantes à condição operacional:}
+    razões entre eixos e entre bandas de frequência, e a derivada da amplitude
+    em relação a $\omega^2$, indicada pela análise de validação física.
+  \item \textbf{Instrumentar explicabilidade local} por atribuição de
+    contribuição~\cite{lundberg2017shap}, expondo ao técnico \emph{quais}
+    grandezas sustentaram cada diagnóstico. Hoje o painel mostra apenas a
+    importância global.
+\end{enumerate}
+
+\subsection{Médio prazo --- produto e integração}
+
+\begin{enumerate}
+  \item \textbf{Autenticação com perfis} (\req{RI-06}): leitura, operação e
+    curadoria documental, com registro de quem cadastrou cada procedimento.
+  \item \textbf{Suporte a múltiplos equipamentos}: acrescentar identificador de
+    máquina ao esquema de evento e à tabela de histórico --- o identificador já
+    é extraído do tópico MQTT.
+  \item \textbf{Priorização por custo}: substituir a \textit{proxy} de
+    frequência $\times$ severidade vibracional por custo de parada e criticidade
+    do ativo. A matriz de priorização documental ganharia significado
+    econômico.
+  \item \textbf{Ciclo de \textit{feedback} do técnico}: registrar se a
+    prescrição resolveu o problema. É o dado que hoje falta para avaliar a
+    utilidade da prescrição --- e não apenas a acurácia da classificação.
+\end{enumerate}
+
+\subsection{Longo prazo --- plataforma}
+
+\begin{enumerate}
+  \item \textbf{Acesso à forma de onda} e extração de envelope e espectro. É o
+    que desbloqueia as frequências características de
+    rolamento~\cite{randall2011tutorial} e, com elas, o diagnóstico de defeito
+    incipiente.
+  \item \textbf{Prognóstico de vida útil remanescente} conforme a estrutura
+    normativa de prognóstico~\cite{iso13381}, viável quando houver histórico de
+    degradação até a falha.
+  \item \textbf{OPC UA e Sparkplug B} para integração direta com controladores e
+    padronização semântica da carga útil.
+  \item \textbf{TLS no \textit{broker}} e autenticação incondicional
+    (\req{RI-05}).
+  \item \textbf{Monitoramento ativo} com métricas de negócio: distribuição de
+    confiança dos diagnósticos ao longo do tempo, cobertura documental,
+    profundidade da fila de rejeição e latência da geração.
+\end{enumerate}
+
+\section{Dívida técnica reconhecida}
+
+\begin{limitacao}
+\begin{itemize}
+  \item \textbf{Ausência de teste automatizado do \textit{worker} MQTT} ---
+    verificado por roteiro manual (Seção~\ref{sec:demonstracao}).
+  \item \textbf{Ausência de teste da interface} --- camada de apresentação sem
+    lógica de domínio.
+  \item \textbf{Cobertura documental espelhada em duas estruturas} --- tabela
+    relacional e índice vetorial. A fonte de verdade é o índice; a tabela é
+    espelho para consulta. É risco controlado, mas é duplicação.
+  \item \textbf{Um documento indexado \emph{por família}} multiplica o
+    armazenamento. Irrelevante em 268 \textit{chunks}, revisável em escala de
+    milhares.
+  \item \textbf{Ausência de teste de carga} --- os números de latência citados
+    vêm de medição pontual, não de teste sistemático.
+  \item \textbf{Migração de esquema não versionada} --- o esquema é criado por
+    reflexão dos modelos. Uso produtivo exigiria ferramenta de migração
+    versionada.
+\end{itemize}
+\end{limitacao}

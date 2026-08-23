@@ -1,0 +1,522 @@
+% ===========================================================================
+%  4 — Atores e casos de uso
+% ===========================================================================
+\chapter{Atores e casos de uso}
+\label{cap:casosdeuso}
+
+Este capítulo especifica o comportamento observável do sistema em notação
+UML~\cite{omg2017uml}. Ele responde a uma pergunta diferente da do
+Capítulo~\ref{cap:arquitetura}: não \emph{como} o sistema é construído, mas
+\emph{o que} ele faz, para quem, sob quais condições e com qual resultado.
+
+\section{Atores}
+
+O sistema tem seis atores: três humanos e três de sistema. A distinção importa
+porque os atores de sistema operam sem supervisão, o que impõe requisitos de
+robustez --- validação, idempotência e fila de rejeição --- que os atores
+humanos não impõem.
+
+\begin{tabularx}{\linewidth}{@{}L{40mm}L{20mm}X@{}}
+\toprule
+\headrow \thd{Ator} & \thd{Tipo} & \thd{Responsabilidade e interesse}\\
+\midrule
+\textbf{Técnico de manutenção} & Humano, primário &
+  Recebe o evento suspeito, submete o diagnóstico e executa o procedimento
+  prescrito. Interessa-lhe a resposta acionável: qual o defeito, com que
+  confiança, quais passos seguir e qual documento consultar.\\
+\zebra \textbf{Engenheiro de manutenção} & Humano, primário &
+  Analisa o histórico, prioriza lacunas documentais e cadastra novos
+  procedimentos. Interessa-lhe a visão agregada: quais falhas são frequentes,
+  quais são severas e quais ainda não têm procedimento escrito.\\
+\textbf{Engenheiro de dados / MLOps} & Humano, primário &
+  Executa a carga do histórico, treina o motor de diagnóstico e acompanha a
+  saúde do serviço. Interessa-lhe reprodutibilidade e a honestidade das
+  métricas.\\
+\zebra \textbf{\textit{Gateway} de aquisição IIoT} & Sistema, primário &
+  Publica telemetria no \textit{broker} MQTT. Pode publicar \textit{payload}
+  malformado --- o sistema precisa tratar isso sem perder o dado.\\
+\textbf{SCADA / CMMS} & Sistema, secundário &
+  Consome os alertas de falha e as mensagens da fila de rejeição publicados pelo
+  sistema, integrando o diagnóstico ao fluxo de ordens de serviço da planta.\\
+\zebra \textbf{Vertex AI (Gemini)} & Sistema, secundário &
+  Fornece \textit{embeddings}, geração de texto e transcrição de páginas
+  escaneadas. É um serviço externo: sua indisponibilidade precisa degradar o
+  sistema, não derrubá-lo.\\
+\bottomrule
+\end{tabularx}
+
+\section{Diagrama de casos de uso}
+
+\begin{landscape}
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  % ---------------- fronteira do sistema
+  \draw[ucsystem] (4.4,-0.35) rectangle (19.0,-13.45);
+  \node[font=\small\bfseries\color{pmxBlueDark}, anchor=north west,
+        fill=pmxSurface, inner sep=3pt] at (4.8,-0.2)
+        {Sistema de Manutenção Prescritiva};
+
+  % ---------------- casos de uso — coluna A (interação humana)
+  \node[ucase] (uc01) at (9.0,-1.6)
+    {\textbf{UC-01}\\Diagnosticar novo evento};
+  \node[ucase] (uc02) at (9.0,-3.7)
+    {\textbf{UC-02}\\Obter instruções de correção};
+  \node[ucasesec] (uc03) at (9.0,-5.8)
+    {\textbf{UC-03}\\Tratar falha não documentada};
+  \node[ucase] (uc06) at (9.0,-7.9)
+    {\textbf{UC-06}\\Conversar com assistente prescritivo};
+  \node[ucase] (uc04) at (9.0,-10.0)
+    {\textbf{UC-04}\\Registrar documento orientativo};
+  \node[ucase] (uc11) at (9.0,-12.1)
+    {\textbf{UC-11}\\Analisar histórico no painel};
+
+  % ---------------- casos de uso — coluna B (sistema e lote)
+  \node[ucase] (uc09) at (16.0,-1.6)
+    {\textbf{UC-09}\\Ingerir telemetria industrial};
+  \node[ucasesec] (uc10) at (16.0,-3.7)
+    {\textbf{UC-10}\\Tratar telemetria inválida};
+  \node[ucase] (uc05) at (16.0,-5.8)
+    {\textbf{UC-05}\\Consultar cobertura documental};
+  \node[ucase] (uc12) at (16.0,-7.9)
+    {\textbf{UC-12}\\Verificar saúde do sistema};
+  \node[ucase] (uc07) at (16.0,-10.0)
+    {\textbf{UC-07}\\Carregar histórico de eventos};
+  \node[ucase] (uc08) at (16.0,-12.1)
+    {\textbf{UC-08}\\Treinar motor de diagnóstico};
+
+  % ---------------- atores humanos (esquerda)
+  \ator{atTec}{(1.6,-2.2)}{Técnico de manutenção}
+  \ator{atEng}{(1.6,-7.1)}{Engenheiro de manutenção}
+  \atorsys{atVertex}{(1.6,-12.4)}{Vertex AI (Gemini)}
+
+  % ---------------- atores de sistema (direita)
+  \ator{atGw}{(21.6,-1.6)}{\textit{Gateway} de aquisição IIoT}
+  \ator{atScada}{(21.6,-5.1)}{SCADA / CMMS}
+  \ator{atData}{(21.6,-10.2)}{Engenheiro de dados / MLOps}
+
+  % ---------------- associações — esquerda (roteamento ortogonal em canais
+  %                  distintos, para que nenhuma linha atravesse uma elipse)
+  \draw[ucrel] (atTec.east) -- (6.95,-2.2) -- (6.95,-1.6) -- (uc01.west);
+  \draw[ucrel] (atTec.east) -- (6.70,-2.2) -- (6.70,-7.9) -- (uc06.west);
+  \draw[ucrel] (atEng.east) -- (6.45,-7.1) -- (6.45,-1.6) -- (uc01.west);
+  \draw[ucrel] (atEng.east) -- (6.20,-7.1) -- (6.20,-10.0) -- (uc04.west);
+  \draw[ucrel] (atEng.east) -- (5.95,-7.1) -- (5.95,-12.1) -- (uc11.west);
+  \draw[ucrel] (atVertex.east) -- (5.70,-12.4) -- (5.70,-3.7) -- (uc02.west);
+  \draw[ucrel] (atVertex.east) -- (5.45,-12.4) -- (5.45,-7.9) -- (uc06.west);
+  \draw[ucrel] (atVertex.east) -- (5.20,-12.4) -- (5.20,-10.0) -- (uc04.west);
+
+  % ---------------- associações — direita
+  \draw[ucrel] (atGw.west) -- (uc09.east);
+  \draw[ucrel] (atScada.west) -- (18.05,-5.1) -- (18.05,-1.6) -- (uc09.east);
+  \draw[ucrel] (atScada.west) -- (18.30,-5.1) -- (18.30,-3.7) -- (uc10.east);
+  \draw[ucrel] (atData.west) -- (18.05,-10.2) -- (18.05,-7.9) -- (uc12.east);
+  \draw[ucrel] (atData.west) -- (uc07.east);
+  \draw[ucrel] (atData.west) -- (18.30,-10.2) -- (18.30,-12.1) -- (uc08.east);
+
+  % ---------------- relações entre casos de uso
+  \draw[ucinclude] (uc01) -- (uc02)
+    node[ucnote, midway, right=1pt, fill=pmxSurface, inner sep=1.5pt]
+    {$\ll$\textit{include}$\gg$};
+  \draw[ucextend] (uc03) -- (uc02)
+    node[ucnote, midway, right=1pt, fill=pmxSurface, inner sep=1.5pt]
+    {$\ll$\textit{extend}$\gg$};
+  \draw[ucextend] (uc10) -- (uc09)
+    node[ucnote, midway, right=1pt, fill=pmxSurface, inner sep=1.5pt]
+    {$\ll$\textit{extend}$\gg$};
+  \draw[ucinclude] (uc09.west) -- (uc01.east)
+    node[ucnote, midway, above=1pt, fill=pmxSurface, inner sep=1.5pt]
+    {$\ll$\textit{include}$\gg$};
+  \draw[ucinclude] (uc06.east) -- (12.4,-7.9) -- (12.4,-5.8) -- (uc05.west)
+    node[ucnote, pos=0.30, right=2pt, fill=pmxSurface, inner sep=1.5pt]
+    {$\ll$\textit{include}$\gg$};
+
+\end{tikzpicture}}
+\caption[Diagrama de casos de uso]{Diagrama de casos de uso do sistema. As
+  elipses em tom claro (\ucr{UC-03} e \ucr{UC-10}) são extensões condicionais:
+  ocorrem apenas quando a condição de exceção se verifica --- falha sem
+  documento e \textit{payload} inválido, respectivamente. Ambas são exigências
+  explícitas do enunciado, não tratamentos de erro incidentais.}
+\label{fig:casosdeuso}
+\end{figure}
+\end{landscape}
+
+\begin{legendadiag}
+\textcolor{pmxBlue}{---} associação ator--caso de uso \quad
+\textcolor{pmxGreen}{- - $\rightarrow$} relação $\ll$\textit{include}$\gg$
+(sempre executada) \quad
+\textcolor{pmxOrange}{- - $\rightarrow$} relação $\ll$\textit{extend}$\gg$
+(executada sob condição).
+\end{legendadiag}
+
+\section{Especificação dos casos de uso}
+
+Cada caso de uso é especificado com ator primário, pré-condições,
+pós-condições, fluxo principal, fluxos alternativos e rastreabilidade aos
+requisitos da Seção~\ref{sec:rf}.
+
+% ---------------------------------------------------------------------------
+\subsection{UC-01 --- Diagnosticar novo evento}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Técnico de manutenção; Engenheiro de manutenção;
+  \ucr{UC-09} (quando automático)\\
+\zebra Requisitos & \req{RF-01}, \req{RF-02}, \req{RF-17}, \req{RF-19}\\
+Pré-condições & Artefatos de ML presentes em \arq{artifacts/}; histórico
+  carregado no banco.\\
+\zebra Pós-condições & Diagnóstico retornado ao solicitante e registrado na
+  tabela \cd{diagnoses} para auditoria.\\
+Fluxo principal &
+  \textbf{1.} O ator submete o JSON do evento a \cd{POST /api/v1/diagnose}.
+  \textbf{2.} O sistema valida o \textit{payload} contra o esquema
+  \cd{SensorEvent}. \textbf{3.} Calcula as 5 \textit{features} derivadas e
+  padroniza o vetor de 23 dimensões. \textbf{4.} O classificador devolve a
+  família mais provável e sua probabilidade. \textbf{5.} O KNN recupera os 25
+  vizinhos mais próximos e calcula a concordância com a família prevista.
+  \textbf{6.} O sistema agrega as estatísticas históricas da família ---
+  contagem, primeira e última ocorrência, frequência diária e série mensal.
+  \textbf{7.} Classifica a confiança em \cd{alta}, \cd{media} ou \cd{baixa}.
+  \textbf{8.} Se a família for de falha, invoca \ucr{UC-02}. \textbf{9.} Persiste
+  a auditoria e devolve a resposta.\\
+\zebra Fluxo alt.\ A & \textbf{2a.} \textit{Payload} inválido: retorna
+  HTTP 422 com a lista de campos inconsistentes; nada é persistido.\\
+Fluxo alt.\ B & \textbf{8a.} Família de estado operacional
+  (\cd{is\_fault=false}): não há prescrição nem sugestão --- não existe ação a
+  prescrever.\\
+\zebra Fluxo alt.\ C & \textbf{9a.} Banco indisponível: a auditoria falha em
+  silêncio (\textit{rollback}) e a resposta é devolvida normalmente. O
+  diagnóstico não depende da gravação.\\
+Exceção & Artefatos ausentes: \cd{GET /health} reporta
+  \cd{artifacts\_loaded=false} e a interface orienta a executar o treino.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-02 --- Obter instruções de correção}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & \ucr{UC-01} ($\ll$\textit{include}$\gg$); ator secundário:
+  Vertex AI\\
+\zebra Requisitos & \req{RF-03}, \req{RNF-06}\\
+Pré-condições & Família de falha identificada; base documental indexada.\\
+\zebra Pós-condições & Instruções em Markdown com seções de segurança,
+  diagnóstico, correção, validação e prevenção, acompanhadas das citações de
+  documento, seção e página.\\
+Fluxo principal &
+  \textbf{1.} O sistema consulta o \textit{guardrail} de cobertura para a
+  família. \textbf{2.} Sendo documentada, monta a consulta com o nome de
+  exibição da família e os sintomas do evento. \textbf{3.} Gera o
+  \textit{embedding} da consulta. \textbf{4.} Recupera os \textit{top-k}
+  trechos filtrados pela família. \textbf{5.} Monta o \textit{prompt} de
+  contexto fechado com os trechos numerados. \textbf{6.} Solicita a geração ao
+  modelo com \cd{temperature=0.2}. \textbf{7.} Extrai as citações dos
+  \emph{metadados} dos trechos recuperados --- nunca do texto gerado.
+  \textbf{8.} Devolve prescrição e citações.\\
+\zebra Fluxo alt.\ A & \textbf{2a.} Família não documentada: aciona
+  \ucr{UC-03}; o modelo de linguagem \textbf{não} é chamado.\\
+Exceção & Vertex AI indisponível: HTTP 503 com orientação de configuração de
+  credenciais; o diagnóstico das etapas anteriores permanece válido.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-03 --- Tratar falha não documentada}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & \ucr{UC-02} ($\ll$\textit{extend}$\gg$)\\
+\zebra Requisitos & \req{RF-04}\\
+Condição de extensão & A família de falha prevista não possui nenhum
+  \textit{chunk} indexado na base vetorial.\\
+\zebra Pós-condições & Resposta com \cd{documented=false},
+  \cd{prescription=null} e \cd{suggestion} contendo o aviso e a orientação de
+  registro. \textbf{Nenhuma} chamada ao modelo de linguagem é feita.\\
+Fluxo principal &
+  \textbf{1.} O \textit{guardrail} determina ausência de cobertura.
+  \textbf{2.} O sistema recupera o nome de exibição da família.
+  \textbf{3.} Formata a mensagem padrão: informa que não existe documento
+  orientativo cadastrado para aquela falha e sugere registrar o procedimento na
+  aba \textit{Documentos}. \textbf{4.} Devolve a resposta e encerra.\\
+\zebra Observação & Este é o caminho exigido pelo enunciado. Três famílias do
+  histórico --- \cd{eccentric\_rotor} (\num{16497} ocorrências),
+  \cd{ventoinha} (\num{12299}) e \cd{falta\_fase} (\num{800}) --- foram
+  mantidas sem documento justamente para que o comportamento seja demonstrável
+  com dado real.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-04 --- Registrar documento orientativo}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Engenheiro de manutenção; ator secundário: Vertex AI\\
+\zebra Requisitos & \req{RF-05}, \req{RF-18}, \req{RF-20}\\
+Pré-condições & PDF do procedimento disponível; famílias cobertas conhecidas.\\
+\zebra Pós-condições & \textit{Chunks} indexados com metadados de rastreio;
+  registro em \cd{documents} e \cd{doc\_coverage}; famílias passam a ser
+  cobertas imediatamente.\\
+Fluxo principal &
+  \textbf{1.} O ator envia PDF, título e lista de famílias.
+  \textbf{2.} O sistema valida cada família contra a taxonomia canônica.
+  \textbf{3.} Remove \textit{chunks} anteriores do mesmo arquivo (idempotência).
+  \textbf{4.} Extrai o texto página a página, rastreando o título de seção
+  corrente. \textbf{5.} Acumula \textit{chunks} de cerca de \num{1200}
+  caracteres com sobreposição de 150. \textbf{6.} Gera os \textit{embeddings}.
+  \textbf{7.} Indexa um conjunto de \textit{chunks} por família coberta.
+  \textbf{8.} Registra o documento e a cobertura no banco relacional.
+  \textbf{9.} Devolve a contagem de \textit{chunks} e as famílias atendidas.\\
+\zebra Fluxo alt.\ A & \textbf{2a.} Família inexistente: HTTP 422 com a lista de
+  famílias válidas.\\
+Fluxo alt.\ B & \textbf{4a.} PDF sem camada de texto (escaneado): cada página é
+  renderizada em imagem e transcrita por OCR multimodal antes do
+  \textit{chunking}.\\
+\zebra Fluxo alt.\ C & \textbf{5a.} Nenhum \textit{chunk} útil extraído:
+  HTTP 422 informando que não houve conteúdo aproveitável.\\
+Fluxo alt.\ D & \textbf{8a.} Banco indisponível: a indexação vetorial ---
+  que é o que determina a cobertura --- permanece válida; o registro relacional
+  é revertido.\\
+\zebra Variante automática & Em ambiente novo com índice vazio e
+  \cd{RAG\_BOOTSTRAP=true}, a própria API executa este caso de uso em
+  \textit{thread} separada durante o \textit{startup}, sem intervenção humana.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-05 --- Consultar cobertura documental}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Engenheiro de manutenção; \ucr{UC-04} e \ucr{UC-06}
+  ($\ll$\textit{include}$\gg$)\\
+\zebra Requisitos & \req{RF-06}\\
+Pré-condições & Base vetorial acessível.\\
+\zebra Pós-condições & Lista de famílias documentadas e sem documento, com os
+  documentos cadastrados e suas datas de ingestão.\\
+Fluxo principal &
+  \textbf{1.} O ator solicita a cobertura. \textbf{2.} O sistema consulta os
+  metadados de todos os \textit{chunks} indexados e extrai o conjunto de
+  famílias presentes. \textbf{3.} Cruza com a taxonomia canônica para obter as
+  famílias de falha sem cobertura. \textbf{4.} Lista os documentos ativos do
+  banco relacional. \textbf{5.} Devolve o resultado consolidado.\\
+\zebra Observação & A cobertura é sempre derivada do índice, nunca de uma
+  configuração estática. Um documento cadastrado em tempo de execução altera a
+  resposta na consulta seguinte, sem reinício de serviço.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-06 --- Conversar com assistente prescritivo}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Técnico de manutenção; ator secundário: Vertex AI\\
+\zebra Requisitos & \req{RF-07}, \req{RNF-12}\\
+Pré-condições & Nenhuma obrigatória --- o caso de uso degrada em vez de
+  falhar.\\
+\zebra Pós-condições & Resposta em Markdown, com citações quando houver
+  fundamentação documental, e memória de conversa persistida por sessão.\\
+Fluxo principal &
+  \textbf{1.} O ator envia a pergunta com o identificador da sessão.
+  \textbf{2.} O agente decide qual ferramenta usar. \textbf{3.} Para perguntas
+  quantitativas, invoca a consulta ao histórico (SQL). \textbf{4.} Para
+  procedimentos, invoca a busca documental --- que aplica o \textit{guardrail}
+  internamente. \textbf{5.} Para um JSON colado, invoca o diagnóstico.
+  \textbf{6.} Para perguntas de cobertura, invoca \ucr{UC-05}. \textbf{7.}
+  Compõe a resposta citando os trechos por marcador. \textbf{8.} O coletor de
+  citações devolve as fontes efetivamente recuperadas.\\
+\zebra Fluxo alt.\ A & \textbf{4a.} Família sem documento: a ferramenta retorna
+  \cd{documentado=false} com o aviso pronto; o modelo transmite o aviso e sugere
+  o registro, sem descrever procedimento próprio.\\
+Fluxo alt.\ B & \textbf{2a.} Agente indisponível (sem biblioteca ou sem
+  credenciais): o \textit{endpoint} degrada automaticamente para RAG de um
+  passo, e a interface exibe o modo em uso.\\
+\zebra Exceção & Falha do serviço de linguagem: HTTP 503 com orientação
+  acionável de configuração.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-07 --- Carregar histórico de eventos}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Engenheiro de dados / MLOps\\
+\zebra Requisitos & \req{RF-08}, \req{RNF-14}\\
+Pré-condições & Banco acessível; arquivo CSV disponível.\\
+\zebra Pós-condições & Tabelas \cd{fault\_families}, \cd{label\_map} e
+  \cd{events} populadas e consistentes.\\
+Fluxo principal &
+  \textbf{1.} O ator executa \arq{scripts/ingest\_data.py}.
+  \textbf{2.} O sistema lê o CSV e normaliza os rótulos brutos.
+  \textbf{3.} Canonicaliza \textbf{todos} os rótulos distintos \emph{antes} de
+  gravar qualquer linha. \textbf{4.} Cria as tabelas se necessário.
+  \textbf{5.} Popula as famílias e o mapa de rótulos. \textbf{6.} Carrega os
+  eventos de forma idempotente. \textbf{7.} Imprime o resumo da carga.\\
+\zebra Fluxo alt.\ A & \textbf{3a.} Rótulo sem regra de canonicalização: o
+  processo é \textbf{interrompido} com exceção nomeando o rótulo. Nada é gravado
+  --- é preferível falhar cedo a produzir uma base silenciosamente incorreta.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-08 --- Treinar motor de diagnóstico}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Engenheiro de dados / MLOps\\
+\zebra Requisitos & \req{RF-09}, \req{RNF-03}\\
+Pré-condições & CSV disponível; taxonomia de rótulos válida.\\
+\zebra Pós-condições & Quatro artefatos gravados (\cd{scaler}, \cd{lgbm},
+  \cd{knn}, \cd{index\_meta}) e \arq{metrics.json} com os três protocolos de
+  avaliação.\\
+Fluxo principal &
+  \textbf{1.} O ator executa \cd{python -m src.ml.train}.
+  \textbf{2.} O sistema carrega e deduplica o conjunto de dados.
+  \textbf{3.} Constrói a matriz de \textit{features} (18 brutas + 5 derivadas).
+  \textbf{4.} Avalia com \textit{holdout} por sessão de coleta --- métrica
+  principal. \textbf{5.} Avalia com divisão aleatória estratificada ---
+  referência otimista. \textbf{6.} Avalia com \textit{holdout} por sessão sem a
+  temperatura --- teste de ablação. \textbf{7.} Retreina o modelo final com
+  \SI{100}{\percent} dos dados. \textbf{8.} Indexa o histórico completo no KNN.
+  \textbf{9.} Grava artefatos e métricas.\\
+\zebra Observação & As três avaliações são registradas juntas por decisão
+  metodológica: reportar apenas a divisão aleatória produziria uma promessa de
+  \SI{89}{\percent} de acurácia que o sistema não cumpre em produção
+  (Seção~\ref{sec:vazamento}).\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-09 --- Ingerir telemetria industrial}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & \textit{Gateway} de aquisição IIoT; ator secundário:
+  SCADA / CMMS\\
+\zebra Requisitos & \req{RF-10}, \req{RF-16}, \req{RNF-07}\\
+Pré-condições & \textit{Broker} MQTT acessível; \textit{worker} conectado e
+  inscrito em \cd{sensors/+/telemetry}.\\
+\zebra Pós-condições & Evento persistido de forma idempotente; diagnóstico
+  executado; alerta publicado quando houver falha.\\
+Fluxo principal &
+  \textbf{1.} O \textit{gateway} publica o evento com QoS 1.
+  \textbf{2.} O \textit{worker} recebe a mensagem e extrai o identificador da
+  máquina do tópico. \textbf{3.} Valida o \textit{payload} com o \emph{mesmo}
+  esquema da API. \textbf{4.} Canonicaliza a anotação de falha, se presente.
+  \textbf{5.} Persiste com \cd{merge} pela chave primária --- entrega duplicada
+  não gera linha duplicada. \textbf{6.} Invoca \ucr{UC-01} pela API.
+  \textbf{7.} Sendo falha, publica o alerta em
+  \cd{sensors/\{maquina\}/alerts}.\\
+\zebra Fluxo alt.\ A & \textbf{3a.} \textit{Payload} inválido: aciona
+  \ucr{UC-10}.\\
+Fluxo alt.\ B & \textbf{4a.} Rótulo desconhecido: registra advertência em
+  \textit{log} e persiste o evento sem família --- diferente do ETL em lote, aqui
+  perder o dado seria pior que perder o rótulo.\\
+\zebra Fluxo alt.\ C & \textbf{6a.} API indisponível: registra erro e segue
+  consumindo; o evento já está persistido e pode ser rediagnosticado depois.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-10 --- Tratar telemetria inválida}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & \ucr{UC-09} ($\ll$\textit{extend}$\gg$); ator secundário:
+  SCADA / CMMS\\
+\zebra Requisitos & \req{RF-11}, \req{RNF-07}\\
+Condição de extensão & JSON malformado ou \textit{payload} que não satisfaz o
+  esquema de evento.\\
+\zebra Pós-condições & Mensagem publicada em \cd{sensors/\{maquina\}/dlq} com
+  motivo, \textit{payload} original truncado e \textit{timestamp}; nenhuma linha
+  gravada no banco.\\
+Fluxo principal &
+  \textbf{1.} A validação falha. \textbf{2.} O sistema compõe o registro de
+  rejeição com o motivo (limitado a \num{2000} caracteres) e o \textit{payload}
+  original (limitado a \num{5000}). \textbf{3.} Publica na fila de rejeição com
+  QoS 1. \textbf{4.} Registra advertência em \textit{log}.\\
+\zebra Justificativa & Descartar em silêncio é a falha de operação mais comum
+  em ingestão industrial: o dado desaparece e ninguém percebe. Com a fila de
+  rejeição, o problema fica visível e o \textit{payload} recuperável.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-11 --- Analisar histórico no painel}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Engenheiro de manutenção\\
+\zebra Requisitos & \req{RF-12}, \req{RF-13}, \req{RF-14}, \req{RNF-02},
+  \req{RNF-10}\\
+Pré-condições & Histórico carregado; API disponível.\\
+\zebra Pós-condições & Painel renderizado com os quatro conjuntos de análises e
+  a fila de prioridade documental.\\
+Fluxo principal &
+  \textbf{1.} O ator escolhe o painel na navegação lateral.
+  \textbf{2.} A interface requisita apenas os dados daquele painel.
+  \textbf{3.} \textbf{Visão geral}: distribuição por família, série temporal e
+  matriz de priorização (frequência $\times$ severidade $\times$ cobertura).
+  \textbf{4.} \textbf{Severidade e física}: velocidade RMS estratificada por
+  regime de rotação, com zonas normativas selecionáveis e validação da lei
+  $F = m\,r\,\omega^2$. \textbf{5.} \textbf{Assinaturas}: mapa de escores
+  padronizados por família, ordenado por poder discriminativo.
+  \textbf{6.} \textbf{Qualidade do modelo}: os três protocolos lado a lado,
+  importância das \textit{features} e evidência de vazamento por
+  \textit{feature}.\\
+\zebra Fluxo alt.\ A & \textbf{2a.} Agregação indisponível (banco sem os
+  recursos estatísticos necessários): o painel exibe aviso e mantém os demais
+  gráficos funcionais.\\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------
+\subsection{UC-12 --- Verificar saúde do sistema}
+
+\begin{tabularx}{\linewidth}{@{}L{31mm}X@{}}
+\toprule
+\headrow \thd{Campo} & \thd{Conteúdo}\\
+\midrule
+Ator primário & Engenheiro de dados / MLOps; orquestrador de contêineres\\
+\zebra Requisitos & \req{RF-15}, \req{RNF-11}\\
+Pré-condições & Serviço em execução.\\
+\zebra Pós-condições & Estado reportado sem efeito colateral.\\
+Fluxo principal &
+  \textbf{1.} O ator consulta \cd{GET /api/v1/health}.
+  \textbf{2.} O sistema verifica a presença do artefato do classificador.
+  \textbf{3.} Lista as famílias documentadas a partir do índice vetorial.
+  \textbf{4.} Informa os modelos de linguagem e de \textit{embedding}
+  configurados. \textbf{5.} Devolve o estado consolidado.\\
+\zebra Fluxo alt.\ A & \textbf{3a.} Índice inacessível ou ainda em
+  \textit{bootstrap}: devolve lista vazia em vez de erro --- o serviço está
+  parcialmente pronto, e o orquestrador não deve reprovar a instância por
+  isso.\\
+\bottomrule
+\end{tabularx}

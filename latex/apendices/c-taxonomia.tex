@@ -1,0 +1,131 @@
+% ===========================================================================
+%  Apendice C — Taxonomia de falhas
+% ===========================================================================
+\chapter{Taxonomia canônica de falhas}
+\label{ap:taxonomia}
+
+\section{As 17 famílias}
+
+\begin{tabularx}{\linewidth}{@{}L{40mm}L{14mm}X@{}}
+\toprule
+\headrow \thd{Nome canônico} & \thd{É falha} & \thd{Descrição de exibição}\\
+\midrule
+\endhead
+\multicolumn{3}{@{}l}{\textbf{Famílias de falha (12)}}\\
+\cd{rolamento\_inner} & \yes & Defeito na pista interna do rolamento (BPFI)\\
+\zebra \cd{rolamento\_outer} & \yes & Defeito na pista externa do rolamento
+  (BPFO)\\
+\cd{rolamento\_ball} & \yes & Defeito nos elementos rolantes (BSF)\\
+\zebra \cd{rolamento\_combination} & \yes & Defeito combinado no rolamento\\
+\cd{desbalanceamento} & \yes & Desbalanceamento do rotor\\
+\zebra \cd{desalinhamento} & \yes & Desalinhamento de eixos\\
+\cd{correia} & \yes & Falha na transmissão por correia\\
+\zebra \cd{polia} & \yes & Falha na polia\\
+\cd{cocked\_rotor} & \yes & Rotor inclinado (\textit{cocked rotor})\\
+\zebra \cd{eccentric\_rotor} & \yes & Rotor excêntrico\\
+\cd{ventoinha} & \yes & Falha na ventoinha\\
+\zebra \cd{falta\_fase} & \yes & Falta de fase no motor\\
+\midrule
+\multicolumn{3}{@{}l}{\textbf{Estados operacionais (5) --- não geram
+  prescrição}}\\
+\cd{normal} & \no & Operação normal\\
+\zebra \cd{baseline} & \no & Coleta de linha de base\\
+\cd{teste} & \no & Registro de teste\\
+\zebra \cd{acelerando} & \no & Máquina acelerando (transiente)\\
+\cd{motor\_desligado} & \no & Motor desligado\\
+\bottomrule
+\end{tabularx}
+
+\section{Regras de canonicalização}
+
+Avaliadas \textbf{na ordem}; a primeira que casa vence. Regras de falha precedem
+regras de estado operacional.
+
+\begin{tabularx}{\linewidth}{@{}L{8mm}L{40mm}L{36mm}X@{}}
+\toprule
+\headrow \thd{\#} & \thd{Expressão} & \thd{Família} & \thd{Rótulos reais
+  cobertos}\\
+\midrule
+\endhead
+1 & \cd{inner} & \cd{rolamento\_inner} & \cd{rolamento\_inner},
+  \cd{rolamento\_inner\_2}, \cd{new\_rolamento\_inner\_0},
+  \cd{rolamento\_inner\_carga}\\
+\zebra 2 & \cd{outer} & \cd{rolamento\_outer} & \cd{rolamento\_outer},
+  \cd{rolamento\_outer\_novo\_teste}\\
+3 & \cd{ball} & \cd{rolamento\_ball} & \cd{rolamento\_ball} e variantes de
+  campanha\\
+\zebra 4 & \cd{comb} & \cd{rolamento\_combination} &
+  \cd{rolamento\_combination} e variantes\\
+5 & \cd{desb|abal|abanc|balanc} & \cd{desbalanceamento} &
+  \cd{desbalanceado}, \cd{ddesbalanceado}, \cd{desbanlanceado},
+  \cd{desabalanceado}, \cd{desabanceado} --- \textbf{cinco grafias do mesmo
+  defeito}\\
+\zebra 6 & \cd{desalinh} & \cd{desalinhamento} & \cd{desalinhado},
+  \cd{desalinhado\_2}\\
+7 & \cd{falta\_fase} & \cd{falta\_fase} & \cd{falta\_fase} e variantes\\
+\zebra 8 & \cd{eccentric} & \cd{eccentric\_rotor} & \cd{eccentric\_rotor} e
+  variantes\\
+9 & \cd{ventoinha} & \cd{ventoinha} & \cd{ventoinha} e variantes\\
+\zebra 10 & \cd{correia} & \cd{correia} & \cd{correia} e variantes\\
+11 & \cd{polia} & \cd{polia} & \cd{polia} e variantes\\
+\zebra 12 & \cd{cock} & \cd{cocked\_rotor} & \cd{cocked\_rotor},
+  \cd{cocked\_adxl\_0}, \cd{cockecocked\_adxl\_0},
+  \cd{cocked\_rotor\_pos\_2}\\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Estados operacionais --- avaliados por último}}\\
+13 & \cd{baseline} & \cd{baseline} & \cd{baseline} e variantes\\
+\zebra 14 & \cd{acelerando} & \cd{acelerando} & \cd{acelerando}\\
+15 & \cd{desligado} & \cd{motor\_desligado} & \cd{motor\_desligado},
+  \cd{mortor\_desligado\_novo}\\
+\zebra 16 & \cd{norm} & \cd{normal} & \cd{normal}, \cd{normla\_carga\_3\_3}\\
+17 & \cd{\^{}(new\_)?tes} & \cd{teste} & \cd{teste}, \cd{new\_teste},
+  \cd{new\_tes}\\
+\bottomrule
+\end{tabularx}
+
+\begin{atencao}
+A ordem não é acidental. A regra 2 (\cd{outer}) precede a regra 17
+(\cd{teste}) para que \cd{rolamento\_outer\_novo\_teste} caia em
+\cd{rolamento\_outer}. Inverter a ordem classificaria um defeito real de
+rolamento como registro de teste --- e o sistema deixaria de prescrever
+correção para ele.
+\end{atencao}
+
+\section{Distribuição de ocorrências e cobertura}
+
+\begin{tabularx}{\linewidth}{@{}L{38mm}R{26mm}L{26mm}X@{}}
+\toprule
+\headrow \thd{Família} & \thd{Ocorrências} & \thd{Cobertura} &
+  \thd{F1 no \textit{holdout} por sessão}\\
+\midrule
+\cd{eccentric\_rotor} & \num{16497} & \textcolor{pmxOrange}{sem documento} &
+  0,037\\
+\zebra \cd{ventoinha} & \num{12299} & \textcolor{pmxOrange}{sem documento} &
+  0,047\\
+\cd{falta\_fase} & 800 & \textcolor{pmxOrange}{sem documento} &
+  \textbf{0,940}\\
+\zebra \cd{rolamento\_inner} & --- & \arq{Doc1.pdf} & 0,019\\
+\cd{rolamento\_outer} & --- & \arq{Doc1.pdf} & 0,130\\
+\zebra \cd{rolamento\_ball} & --- & \arq{Doc1.pdf} & 0,054\\
+\cd{rolamento\_combination} & --- & \arq{Doc1.pdf} & 0,070\\
+\zebra \cd{desalinhamento} & --- & \arq{Doc2.pdf} & 0,261\\
+\cd{desbalanceamento} & --- & \arq{Doc3.pdf} & 0,070\\
+\zebra \cd{correia} & --- & \arq{Doc4.pdf} & 0,282\\
+\cd{polia} & --- & \arq{Doc5.pdf} & 0,254\\
+\zebra \cd{cocked\_rotor} & \num{14275} & \arq{Doc6.pdf} & 0,005\\
+\midrule
+\cd{motor\_desligado} & --- & (estado) & 0,546\\
+\zebra \cd{normal} & --- & (estado) & 0,076\\
+\cd{teste} & --- & (estado) & 0,135\\
+\bottomrule
+\end{tabularx}
+
+\begin{nota}
+A leitura conjunta das duas últimas colunas é o argumento central da
+Seção~\ref{sec:vazamento}: a família que o modelo reconhece melhor
+(\cd{falta\_fase}, F1 de \num{0,940}) é justamente uma das que \emph{não} têm
+procedimento documentado --- e as famílias de rolamento, plenamente
+documentadas, são as que menos generalizam. Diagnóstico e documentação não estão
+correlacionados, o que reforça que o teto de generalização é do dado, não do
+acervo.
+\end{nota}

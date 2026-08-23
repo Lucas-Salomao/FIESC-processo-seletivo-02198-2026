@@ -1,0 +1,198 @@
+% ===========================================================================
+%  11 — Interface do usuario
+% ===========================================================================
+\chapter{Interface do usuário}
+\label{cap:interface}
+
+A interface é uma camada de apresentação estrita: consome exclusivamente a API
+e não contém lógica de domínio nem acesso a banco (\adrr{ADR-06}). Este capítulo
+documenta sua arquitetura de informação, os painéis analíticos e as decisões de
+visualização --- que foram tomadas com validação, não por gosto.
+
+\section{Arquitetura de informação}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \node[c4container, text width=28mm, minimum height=12mm] (nav) at (2.2,-3.6)
+    {\textbf{Navegação lateral}\desc{seção + subpainel}};
+
+  \node[c4component, text width=32mm, minimum height=11mm] (s1) at (7.4,0)
+    {\textbf{Painéis}\desc{4 subpainéis analíticos}};
+  \node[c4component, text width=32mm, minimum height=11mm] (s2) at (7.4,-2.4)
+    {\textbf{Diagnóstico}\desc{JSON $\rightarrow$ resposta completa}};
+  \node[c4component, text width=32mm, minimum height=11mm] (s3) at (7.4,-4.8)
+    {\textbf{Conversa}\desc{sessão persistente, sugestões}};
+  \node[c4component, text width=32mm, minimum height=11mm] (s4) at (7.4,-7.2)
+    {\textbf{Documentos}\desc{lista + cadastro de PDF}};
+
+  \node[c4component, text width=34mm, minimum height=9mm] (p1) at (13.6,1.3)
+    {\textbf{Visão geral}\desc{distribuição, série temporal, priorização}};
+  \node[c4component, text width=34mm, minimum height=9mm] (p2) at (13.6,-0.5)
+    {\textbf{Severidade e física}\desc{RMS por rotação, zonas normativas}};
+  \node[c4component, text width=34mm, minimum height=9mm] (p3) at (13.6,-2.3)
+    {\textbf{Assinaturas}\desc{escores padronizados, poder discriminativo}};
+  \node[c4component, text width=34mm, minimum height=9mm] (p4) at (13.6,-4.1)
+    {\textbf{Qualidade do modelo}\desc{3 protocolos, importância, vazamento}};
+
+  \node[externo, text width=26mm, minimum height=11mm] (st) at (2.2,-7.4)
+    {\textbf{Estado do sistema}\desc{recolhido por padrão}};
+
+  \draw[c4rel] (nav.east) -- (5.6,0);
+  \draw[c4rel] (nav.east) -- (5.6,-2.4);
+  \draw[c4rel] (nav.east) -- (5.6,-4.8);
+  \draw[c4rel] (nav.east) -- (5.6,-7.2);
+  \draw[c4rel] (s1.east) -- (11.6,1.3);
+  \draw[c4rel] (s1.east) -- (11.6,-0.5);
+  \draw[c4rel] (s1.east) -- (11.6,-2.3);
+  \draw[c4rel] (s1.east) -- (11.6,-4.1);
+  \draw[c4reldash] (nav.south) -- (st.north);
+
+\end{tikzpicture}}
+\caption[Arquitetura de informação da interface]{Arquitetura de informação. A
+  navegação renderiza apenas a seção ativa, e cada painel requisita somente os
+  dados de que precisa --- não há carga antecipada do conjunto completo.}
+\label{fig:ia}
+\end{figure}
+
+\section{Seção de diagnóstico}
+
+Recebe o JSON do evento --- com botão para carregar o exemplo do enunciado --- e
+apresenta a resposta em quatro blocos:
+
+\begin{enumerate}
+  \item \textbf{Cabeçalho de métricas}: tipo de defeito, probabilidade,
+    concordância dos vizinhos e selo de confiança, colorido conforme o nível.
+  \item \textbf{Ocorrências históricas}: total registrado, frequência diária,
+    período de observação e a distribuição temporal em gráfico de barras.
+  \item \textbf{Instruções de correção} em Markdown, com as fontes citadas em
+    seção expansível --- documento, seção e página.
+  \item \textbf{Ou} o aviso de falha não documentada com a sugestão de registro,
+    em destaque de atenção.
+\end{enumerate}
+
+Quando o diagnóstico aponta estado operacional, a interface informa que não há
+ação prescritiva a tomar --- e não exibe seção de prescrição alguma, evitando a
+sugestão implícita de que algo precisa ser feito.
+
+\section{Painéis analíticos}
+\label{sec:paineis}
+
+Cada gráfico do painel entrou por responder a uma pergunta operacional
+específica \emph{e} por ter passado no teste de não enganar quem o lê. A
+fundamentação estatística está no Capítulo~\ref{cap:ml}; aqui registra-se a
+tradução em produto.
+
+\subsection{Priorização documental}
+\label{sec:priorizacao}
+
+\textbf{Pergunta.} O sistema só prescreve correção para falhas documentadas.
+Quais lacunas custam mais caro?
+
+\textbf{Resposta.} Uma matriz de bolhas que cruza três dimensões: frequência
+(contagem por família) no eixo horizontal, severidade (máxima severidade
+relativa entre regimes de rotação) no vertical, e cobertura documental na cor.
+O canto superior direito em laranja é a fila de trabalho da engenharia de
+manutenção.
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}R{26mm}X@{}}
+\toprule
+\headrow \thd{Família sem documento} & \thd{Ocorrências} & \thd{Situação}\\
+\midrule
+\cd{eccentric\_rotor} & \num{16497} & Maior lacuna do acervo --- segunda família
+  mais frequente do histórico.\\
+\zebra \cd{ventoinha} & \num{12299} & Sem procedimento cadastrado.\\
+\cd{falta\_fase} & 800 & Sem procedimento, mas é a classe que o modelo
+  reconhece melhor ($\text{F1} = 0{,}940$).\\
+\bottomrule
+\end{tabularx}
+
+\subsection{Severidade e validação física}
+
+O painel apresenta a velocidade eficaz \textbf{sempre estratificada por regime
+de rotação}, com dois modos de leitura: absoluto, com as zonas normativas
+sobrepostas e classe de máquina selecionável; e relativo à linha de base do
+mesmo regime. O gráfico de validação física destaca o desbalanceamento contra as
+demais famílias em cinza, evidenciando a dependência quadrática com a rotação
+prevista pelo manual (Seção~\ref{sec:fisica}).
+
+\subsection{Assinaturas}
+
+Mapa de calor dos escores padronizados por família e por \textit{feature},
+\textbf{ordenado pelo poder discriminativo} --- não pela ordem das colunas no
+conjunto de dados. Indicadores fracos aparecem em cinza, com legenda explicando
+o descompasso frente ao que os manuais previam
+(Seção~\ref{sec:assinaturas}).
+
+\subsection{Qualidade do modelo}
+
+Apresenta os três protocolos de avaliação lado a lado, o F1 por classe, a
+importância das \textit{features} com a temperatura destacada e o gráfico de
+vazamento por \textit{feature}.
+
+\begin{decisao}
+Exibir os três protocolos é uma decisão de produto, não de estética. Um painel
+que mostrasse apenas os \SI{89}{\percent} da divisão aleatória comunicaria uma
+capacidade que o sistema não tem em produção --- e a primeira vez que um técnico
+confiasse nele e errasse, a credibilidade da ferramenta inteira estaria perdida.
+\end{decisao}
+
+\section{Decisões de visualização}
+
+As cores não foram escolhidas por preferência: cada conjunto passou por um
+validador de paleta que verifica banda de luminosidade, piso de croma, separação
+para deficiências de visão de cores e contraste contra a superfície, nos modos
+claro e escuro. A diferença perceptual é medida em CIEDE2000~\cite{sharma2005ciede2000},
+com piso de $\Delta E \geq 6$ sob simulação de deuteranopia, conforme a prática
+recomendada para material acessível~\cite{okabe2008cud}.
+
+\begin{table}[H]
+\caption{Codificações visuais e sua justificativa}
+\label{tab:visualizacao}
+\begin{tabularx}{\linewidth}{@{}L{32mm}L{38mm}X@{}}
+\toprule
+\headrow \thd{Codificação} & \thd{Escolha} & \thd{Justificativa}\\
+\midrule
+Documentada $\times$ sem documento & Azul \cd{\#2a78d6} / laranja
+  \cd{\#eb6834} &
+  A escolha intuitiva verde/vermelho \textbf{falhou} o teste: $\Delta E = 4{,}1$
+  sob deuteranopia, abaixo do piso de 6. Azul/laranja atinge
+  $\Delta E = 24{,}7$. A legenda usa ainda ícone como codificação
+  redundante.\\
+\zebra Regime de rotação & Rampa ordinal de um único tom (azul, claro para
+  escuro) &
+  Rotação é grandeza \textbf{ordenada}, não identidade. Matizes categóricos
+  sugeririam categorias sem ordem, o que é uma afirmação
+  falsa~\cite{munzner2014visualization}.\\
+Escore padronizado & Divergente azul $\leftrightarrow$ vermelho, cinza no meio &
+  O escore expressa \textbf{polaridade} --- acima ou abaixo da média global.
+  Uma escala arco-íris destruiria essa leitura.\\
+\zebra Famílias no gráfico de física & Cinza mais um destaque &
+  Doze séries excedem qualquer paleta categórica segura. Destaque sobre
+  referência cinza comunica melhor do que doze cores que ninguém
+  distingue.\\
+Severidade & Percentis (50, 95, 99), nunca média &
+  As distribuições têm cauda longa; a média seria puxada por transientes de
+  partida e daria uma impressão falsa de severidade típica.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{nota}
+O registro do \emph{erro evitado} é a parte mais útil desta tabela. A
+codificação verde/vermelho para \enquote{documentado / não documentado} é a
+primeira escolha de qualquer pessoa, é usada em incontáveis painéis e é
+inacessível para aproximadamente \SI{8}{\percent} dos homens. O teste custou
+minutos; a correção, uma linha de código.
+\end{nota}
+
+\section{Estado do sistema}
+
+A barra lateral apresenta, em bloco recolhido por padrão, o estado corrente:
+modelo de linguagem e de \textit{embedding} configurados, presença dos artefatos
+de aprendizado de máquina e número de famílias documentadas. Se a API estiver
+inacessível, a interface interrompe a renderização com mensagem acionável
+contendo o endereço configurado --- em vez de exibir painéis vazios que parecem
+indicar ausência de dados.

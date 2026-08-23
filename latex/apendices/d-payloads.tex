@@ -1,0 +1,124 @@
+% ===========================================================================
+%  Apendice D — Payloads e respostas
+% ===========================================================================
+\chapter{\textit{Payloads} e respostas de referência}
+\label{ap:payloads}
+
+Este apêndice reúne os \textit{payloads} usados nos critérios de aceite da
+Seção~\ref{sec:aceite}.
+
+\section{CA-1 --- Evento do enunciado (falha documentada)}
+
+\begin{lstlisting}[language=bash, caption={Requisição}, label={lst:ca1req}]
+curl -X POST http://localhost:8000/api/v1/diagnose \
+     -H 'Content-Type: application/json' -d @evento.json
+\end{lstlisting}
+
+\begin{lstlisting}[language=jsonpmx, caption={\arq{evento.json}}, label={lst:ca1json}]
+{
+  "id": 114387,
+  "created_at": "2026-06-01 21:32:53.911176+00:00",
+  "z_rms_velocity_mm_s": 1.517,
+  "temperature_c": 24.69,
+  "x_rms_velocity_mm_s": 2.0,
+  "z_peak_acceleration_g": 0.484,
+  "x_peak_acceleration_g": 0.631,
+  "z_peak_vel_comp_freq_hz": 61.0,
+  "x_peak_vel_comp_freq_hz": 61.0,
+  "z_rms_acceleration_g": 0.09,
+  "x_rms_acceleration_g": 0.114,
+  "z_kurtosis": 2.392,
+  "x_kurtosis": 2.77,
+  "z_crest_factor": 3.747,
+  "x_crest_factor": 4.269,
+  "z_peak_velocity_mm_s": 2.146,
+  "x_peak_velocity_mm_s": 2.829,
+  "z_high_freq_rms_accel_g": 0.129,
+  "x_high_freq_rms_accel_g": 0.147,
+  "fault": "cocked_rotor_2",
+  "rpm": 1000.0
+}
+\end{lstlisting}
+
+\textbf{Resultado observado:} família \cd{cocked\_rotor} com probabilidade de
+aproximadamente \SI{92}{\percent}, \num{14275} ocorrências semelhantes com
+distribuição temporal e frequência diária, e instruções de correção citando o
+\arq{Doc6.pdf}.
+
+\section{CA-2 --- Falha sem documento}
+
+Basta submeter um evento cuja família prevista seja \cd{ventoinha},
+\cd{eccentric\_rotor} ou \cd{falta\_fase}. A resposta traz
+\cd{documented=false}, \cd{prescription=null} e o campo \cd{suggestion}
+preenchido --- e nenhuma chamada ao serviço de linguagem é feita.
+
+\begin{lstlisting}[language=bash, caption={Verificação por linha de comando}, label={lst:ca2}]
+curl -s -X POST http://localhost:8000/api/v1/diagnose \
+     -H 'Content-Type: application/json' -d @evento-ventoinha.json \
+  | jq '{fault: .predicted_fault, documented, prescription, suggestion}'
+\end{lstlisting}
+
+\section{CA-3 --- Cobertura após cadastro}
+
+\begin{lstlisting}[language=bash, caption={Ciclo completo: lacuna, cadastro e nova cobertura}, label={lst:ca3}]
+# 1. Antes: a familia nao esta coberta
+curl -s http://localhost:8000/api/v1/health | jq '.documented_families'
+
+# 2. Cadastrar o procedimento
+curl -X POST http://localhost:8000/api/v1/documents \
+  -F 'file=@procedimento-ventoinha.pdf' \
+  -F 'title=Procedimento para Correcao de Falhas em Ventoinhas' \
+  -F 'families=ventoinha'
+
+# 3. Depois: a familia aparece na cobertura
+curl -s http://localhost:8000/api/v1/health | jq '.documented_families'
+
+# 4. O mesmo evento agora recebe prescricao
+curl -s -X POST http://localhost:8000/api/v1/diagnose \
+     -H 'Content-Type: application/json' -d @evento-ventoinha.json \
+  | jq '.documented, .prescription.citations'
+\end{lstlisting}
+
+\section{CA-5 --- \textit{Payload} inválido e fila de rejeição}
+
+\begin{lstlisting}[language=bash, caption={Demonstração da fila de rejeição}, label={lst:ca5}]
+# Terminal 1: observar as filas de saida
+mosquitto_sub -h localhost -t 'sensors/+/alerts' -t 'sensors/+/dlq' -v
+
+# Terminal 2: publicar um payload invalido
+python scripts/simulate_sensor.py --invalid
+\end{lstlisting}
+
+\begin{lstlisting}[language=jsonpmx, caption={Mensagem observada na fila de rejeição (abreviada)}, label={lst:dlq}]
+{
+  "reason": "1 validation error for SensorEvent\n  temperature_c\n    Field
+             required [type=missing, input_value={...}, input_type=dict]",
+  "payload": "{\"id\": 999999, \"x_rms_velocity_mm_s\": 2.0, ...}",
+  "ts": "2026-08-23T14:07:21.418293+00:00"
+}
+\end{lstlisting}
+
+\section{Exemplos de perguntas para a conversa}
+
+\begin{tabularx}{\linewidth}{@{}L{58mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{Pergunta} & \thd{Ferramenta acionada} & \thd{Comportamento
+  esperado}\\
+\midrule
+\enquote{Quantas ocorrências de \cd{cocked\_rotor} nos últimos 30 dias?} &
+  \cd{consultar\_historico} & Números vindos de SQL sobre o histórico, com a
+  janela ancorada no evento mais recente do banco.\\
+\zebra \enquote{Como corrijo um desalinhamento?} &
+  \cd{buscar\_documentos} & Procedimento com citações de documento, seção e
+  página.\\
+\enquote{Como corrijo a ventoinha?} &
+  \cd{buscar\_documentos} & \textit{Guardrail}: aviso de falha não documentada e
+  sugestão de registro. \textbf{Nenhum procedimento é descrito.}\\
+\zebra \enquote{Quais falhas têm procedimento documentado?} &
+  \cd{cobertura\_documental} & Lista de famílias documentadas e sem documento,
+  com os documentos cadastrados.\\
+Colar o JSON de um evento no campo de conversa &
+  \cd{diagnosticar\_evento} & Diagnóstico completo explicado em linguagem
+  clara.\\
+\bottomrule
+\end{tabularx}

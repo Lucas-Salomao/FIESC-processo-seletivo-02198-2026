@@ -1,0 +1,752 @@
+% ===========================================================================
+%  5 — Arquitetura
+% ===========================================================================
+\chapter{Arquitetura da solução}
+\label{cap:arquitetura}
+
+A descrição arquitetural segue a norma ISO/IEC/IEEE 42010~\cite{iso42010}:
+identifica os interessados, os \textit{drivers} que restringem o desenho,
+apresenta visões complementares do sistema e registra as decisões com suas
+consequências. A notação de visualização é o modelo C4~\cite{brown2026c4}, que
+organiza a arquitetura em quatro níveis de aproximação sucessiva.
+
+\section{Drivers arquiteturais}
+
+Um \textit{driver} arquitetural é uma exigência que, se ignorada, invalida a
+solução. Foram cinco.
+
+\begin{tabularx}{\linewidth}{@{}L{13mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{ID} & \thd{Driver} & \thd{Consequência arquitetural}\\
+\midrule
+\req{DR-01} & Garantia verificável de cobertura documental &
+  A verificação é um componente determinístico, posicionado \emph{antes} da
+  camada de linguagem no fluxo de controle. O modelo generativo nunca decide se
+  existe documento (\adrr{ADR-09}).\\
+\zebra \req{DR-02} & Resposta composta de três naturezas distintas &
+  Três mecanismos especializados --- classificador, busca por similaridade e
+  recuperação com geração --- em vez de um mecanismo único
+  (\adrr{ADR-04}).\\
+\req{DR-03} & Integração com o chão de fábrica &
+  Ingestão assíncrona por MQTT, com garantias de entrega, idempotência e fila de
+  rejeição; alertas devolvidos à planta pelo mesmo canal
+  (\adrr{ADR-10}).\\
+\zebra \req{DR-04} & Reprodutibilidade e testabilidade sem nuvem &
+  Cliente de linguagem definido como interface fina, substituível por
+  implementação \textit{fake}; toda configuração externalizada em variáveis de
+  ambiente.\\
+\req{DR-05} & Restrição de hardware da estação alvo &
+  Nenhuma inferência local de modelo de linguagem; artefatos de ML mantidos
+  compactos; base vetorial embarcada em vez de servidor dedicado
+  (\adrr{ADR-01}, \adrr{ADR-03}).\\
+\bottomrule
+\end{tabularx}
+
+\section{Visões arquiteturais}
+
+O sistema é descrito por cinco visões complementares, no espírito do modelo
+4+1~\cite{kruchten1995views}. Cada visão responde a perguntas de um grupo
+distinto de interessados; nenhuma delas é suficiente isoladamente.
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}L{34mm}X@{}}
+\toprule
+\headrow \thd{Visão} & \thd{Notação} & \thd{Onde está neste documento}\\
+\midrule
+Lógica & C4 níveis 1--3, diagrama de classes &
+  Seções~\ref{sec:c4nivel1} a~\ref{sec:c4nivel4}\\
+\zebra Processos & Diagramas de sequência e de atividade &
+  Seção~\ref{sec:fluxos}, Capítulo~\ref{cap:atividades}\\
+Desenvolvimento & Estrutura de módulos e dependências &
+  Capítulo~\ref{cap:codigo}\\
+\zebra Física / implantação & Diagramas de implantação &
+  Capítulo~\ref{cap:infraestrutura}\\
+Cenários & Casos de uso &
+  Capítulo~\ref{cap:casosdeuso}\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{C4 nível 1 --- Contexto do sistema}
+\label{sec:c4nivel1}
+
+O nível de contexto responde à pergunta mais elementar: quem usa o sistema, com
+que outros sistemas ele conversa e onde está sua fronteira.
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  % --- pessoas
+  \node[c4person] (tec) at (3.0,0)
+    {\textbf{Técnico de manutenção}\desc{Diagnostica e executa o procedimento}};
+  \node[c4person] (eng) at (8.0,0)
+    {\textbf{Engenheiro de manutenção}\desc{Analisa histórico e documenta}};
+  \node[c4person] (dat) at (13.0,0)
+    {\textbf{Engenheiro de dados}\desc{Carrega, treina e monitora}};
+
+  % --- sistema central
+  \node[c4system, text width=62mm, minimum height=25mm] (sis) at (8.0,-4.2)
+    {\textbf{Sistema de Manutenção Prescritiva}\desc{Identifica o defeito,
+     quantifica ocorrências históricas semelhantes e prescreve a correção
+     fundamentada na base documental da planta --- restringindo-se às falhas
+     efetivamente documentadas}};
+
+  % --- sistemas externos
+  \node[c4systemext, text width=24mm, minimum height=18mm] (gw) at (1.30,-4.2)
+    {\textbf{\textit{Gateway} de aquisição IIoT}\desc{Sensores de vibração}};
+  \node[c4systemext, text width=24mm, minimum height=18mm] (scada) at (14.70,-4.2)
+    {\textbf{SCADA / CMMS}\desc{Ordens de serviço}};
+  \node[c4systemext, text width=44mm, minimum height=15mm] (vertex) at (8.0,-8.3)
+    {\textbf{Vertex AI --- Gemini}\desc{\textit{Embeddings}, geração de texto e
+     OCR de página}};
+
+  % --- relações
+  \draw[c4rel] (tec.south) -- (5.4,-2.85)
+    node[cxlabel, pos=0.30, left=1pt]{diagnostica};
+  \draw[c4rel] (eng.south) -- (sis.north)
+    node[cxlabel, pos=0.42, right=3pt]{cadastra documento};
+  \draw[c4rel] (dat.south) -- (10.6,-2.85)
+    node[cxlabel, pos=0.30, right=1pt]{carrega, treina};
+  \draw[c4rel] (gw.east) -- (sis.west)
+    node[cxlabel, midway, above=3pt]{telemetria (MQTT)};
+  \draw[c4rel] (sis.east) -- (scada.west)
+    node[cxlabel, midway, above=3pt]{alertas, DLQ};
+  \draw[c4relbi] (sis.south) -- (vertex.north)
+    node[cxlabel, midway, right=3pt]{HTTPS};
+
+\end{tikzpicture}}
+\caption[C4 nível 1 --- contexto]{C4 nível 1: contexto do sistema. Três atores
+  humanos com objetivos distintos, um sistema de origem de dados
+  (\textit{gateway} IIoT), um sistema de destino de alertas (SCADA/CMMS) e um
+  único serviço externo na dependência crítica de linguagem.}
+\label{fig:c4l1}
+\end{figure}
+
+\begin{nota}
+A única dependência externa \emph{não substituível em tempo de execução} é o
+Vertex AI, e ainda assim sua indisponibilidade não derruba o sistema: o
+diagnóstico e a quantificação histórica continuam funcionando, e a conversa
+degrada para RAG de um passo. Essa contenção de acoplamento é deliberada
+(\req{RNF-12}).
+\end{nota}
+
+% ===========================================================================
+\section{C4 nível 2 --- Contêineres}
+\label{sec:c4nivel2}
+
+O nível de contêineres é onde a arquitetura fica interessante --- e onde um
+diagrama único ficaria ilegível. Os contêineres do sistema participam de
+\textbf{três planos de operação} com características muito diferentes:
+síncrono e conduzido por pessoas; assíncrono e conduzido por máquinas; e em
+lote, executado deliberadamente. Cada plano recebe uma vista própria, e a
+Tabela~\ref{tab:conteineres} consolida o catálogo.
+
+\subsection{Plano de aplicação --- síncrono, conduzido por pessoas}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  % --- fronteira
+  \draw[c4zone] (1.1,-2.3) rectangle (15.0,-11.6);
+  \node[c4boundarylbl, fill=pmxSurface] at (1.5,-2.15)
+    {Sistema de Manutenção Prescritiva};
+
+  % --- pessoas
+  \node[c4person, text width=26mm, minimum height=13mm] (tec) at (3.6,-0.7)
+    {\textbf{Técnico de manutenção}};
+  \node[c4person, text width=26mm, minimum height=13mm] (eng) at (8.1,-0.7)
+    {\textbf{Engenheiro de manutenção}};
+
+  % --- contêineres
+  \node[c4container, text width=34mm, minimum height=17mm] (ui) at (3.9,-4.0)
+    {\textbf{Interface}\tech{Streamlit + Plotly}\desc{Painéis, diagnóstico,
+     conversa, documentos}};
+  \node[c4container, text width=40mm, minimum height=20mm] (api) at (9.4,-4.0)
+    {\textbf{API de aplicação}\tech{FastAPI + Uvicorn}\desc{Diagnóstico,
+     prescrição, conversa, analítica, documentos, saúde}};
+
+  \node[c4db, text width=25mm] (pg) at (3.2,-9.4)
+    {\textbf{Histórico}\tech{PostgreSQL}};
+  \node[c4db, text width=25mm] (ch) at (8.0,-9.4)
+    {\textbf{Base vetorial}\tech{ChromaDB (HNSW)}};
+  \node[c4artifact, text width=26mm, minimum height=15mm] (art) at (12.8,-9.4)
+    {\textbf{Artefatos de ML}\tech{joblib}\desc{\SI{74}{\mebi\byte}}};
+
+  % --- externo
+  \node[c4systemext, text width=27mm, minimum height=17mm] (vertex) at (18.0,-4.0)
+    {\textbf{Vertex AI}\tech{Gemini}\desc{\textit{Embeddings}, geração, OCR}};
+
+  % --- relações
+  \draw[c4rel] (tec.south) -- (3.9,-3.1)
+    node[cxlabel, midway, left=1pt]{HTTP};
+  \draw[c4rel] (eng.south) -- (6.3,-3.1);
+  \draw[c4rel] (ui.east) -- (api.west)
+    node[cxlabel, midway, above=1pt]{JSON/HTTP};
+  \draw[c4rel] (api.east) -- (vertex.west)
+    node[cxlabel, midway, above=1pt]{HTTPS};
+  \draw[c4rel] (8.4,-5.4) -- (4.2,-8.15)
+    node[cxlabel, pos=0.45, above=1pt, sloped]{SQLAlchemy};
+  \draw[c4rel] (9.4,-5.4) -- (8.4,-8.15)
+    node[cxlabel, pos=0.5, right=1pt]{consulta vetorial};
+  \draw[c4rel] (10.6,-5.4) -- (12.4,-8.15)
+    node[cxlabel, pos=0.45, above=1pt, sloped]{carga em memória};
+
+\end{tikzpicture}}
+\caption[C4 nível 2 --- plano de aplicação]{C4 nível 2, plano de aplicação. A
+  interface \textbf{não} acessa banco algum: todo dado passa pela API, o que
+  mantém a camada de serviço reutilizável por integradores externos
+  (\adrr{ADR-06}).}
+\label{fig:c4l2app}
+\end{figure}
+
+\subsection{Plano de ingestão industrial --- assíncrono, conduzido por máquinas}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  % --- externos
+  \node[c4systemext, text width=27mm, minimum height=16mm] (gw) at (2.0,-1.0)
+    {\textbf{\textit{Gateway} IIoT}\desc{Publica telemetria}};
+  \node[c4systemext, text width=27mm, minimum height=16mm] (scada) at (2.0,-9.6)
+    {\textbf{SCADA / CMMS}\desc{Consome alertas e rejeições}};
+
+  % --- fronteira
+  \draw[c4zone] (6.2,-0.2) rectangle (16.4,-11.0);
+  \node[c4boundarylbl, fill=pmxSurface] at (6.6,-0.05) {Sistema};
+
+  \node[c4queue, text width=34mm, minimum height=18mm] (broker) at (8.9,-2.0)
+    {\textbf{\textit{Broker} MQTT}\tech{Eclipse Mosquitto 2}\desc{Tópicos:
+     \cd{telemetry}, \cd{alerts}, \cd{dlq}}};
+  \node[c4container, text width=36mm, minimum height=19mm] (wk) at (8.9,-6.3)
+    {\textbf{\textit{Worker} de ingestão}\tech{paho-mqtt}\desc{Valida,
+     persiste, diagnostica, alerta}};
+  \node[c4container, text width=30mm, minimum height=15mm] (api) at (14.0,-6.3)
+    {\textbf{API}\tech{FastAPI}\desc{\cd{POST /diagnose}}};
+  \node[c4db, text width=24mm] (pg) at (8.9,-9.9)
+    {\textbf{Histórico}\tech{PostgreSQL}};
+
+  % --- relações
+  \draw[c4rel] (gw.east) -- (7.5,-1.55)
+    node[cxlabel, pos=0.55, above=1pt, sloped]{\cd{telemetry} QoS 1};
+  \draw[c4rel] (broker.south) -- (wk.north)
+    node[cxlabel, midway, right=2pt]{assinatura \cd{sensors/+/telemetry}};
+  \draw[c4rel] (wk.east) -- (api.west)
+    node[cxlabel, midway, above=1pt]{HTTP};
+  \draw[c4rel] (wk.south) -- (pg.north)
+    node[cxlabel, midway, right=2pt]{\cd{merge} idempotente};
+  \draw[c4rel] (10.7,-6.3) -- (12.0,-6.3);
+  \draw[c4rel] (7.1,-5.5) -- (7.1,-2.9)
+    node[cxlabel, midway, left=1pt]{\cd{alerts}, \cd{dlq}};
+  \draw[c4rel] (7.5,-2.45) -- (3.4,-8.95)
+    node[cxlabel, pos=0.40, above=1pt, sloped]{assinatura de alertas};
+
+\end{tikzpicture}}
+\caption[C4 nível 2 --- plano de ingestão industrial]{C4 nível 2, plano de
+  ingestão industrial. O ciclo se fecha: a telemetria entra pelo \textit{broker}
+  e o diagnóstico volta à planta pelo mesmo \textit{broker}, em tópico distinto.
+  É assim que um SCADA ou um CMMS consumiria a solução sem qualquer
+  acoplamento ao código do sistema (\adrr{ADR-10}).}
+\label{fig:c4l2mqtt}
+\end{figure}
+
+\subsection{Plano de preparação --- em lote, executado deliberadamente}
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \node[c4person, text width=27mm, minimum height=13mm] (dat) at (2.2,-0.8)
+    {\textbf{Engenheiro de dados / MLOps}};
+
+  \draw[c4zone] (0.5,-2.6) rectangle (16.6,-9.6);
+  \node[c4boundarylbl, fill=pmxSurface] at (0.9,-2.45)
+    {Plano de preparação (offline)};
+
+  \node[c4container, text width=30mm, minimum height=16mm] (etl) at (3.0,-4.3)
+    {\textbf{\cd{ingest\_data}}\tech{pandas + SQLAlchemy}\desc{CSV
+     $\rightarrow$ banco}};
+  \node[c4container, text width=30mm, minimum height=16mm] (tr) at (8.5,-4.3)
+    {\textbf{\cd{ml.train}}\tech{scikit-learn + LightGBM}\desc{Avalia, treina,
+     indexa}};
+  \node[c4container, text width=30mm, minimum height=16mm] (idoc) at (14.0,-4.3)
+    {\textbf{\cd{ingest\_docs}}\tech{pymupdf + Gemini}\desc{PDF $\rightarrow$
+     \textit{chunks}}};
+
+  \node[c4db, text width=24mm] (pg) at (3.0,-8.0)
+    {\textbf{Histórico}\tech{PostgreSQL}};
+  \node[c4artifact, text width=26mm, minimum height=14mm] (art) at (8.5,-8.0)
+    {\textbf{Artefatos de ML}\tech{joblib + JSON}};
+  \node[c4db, text width=24mm] (ch) at (14.0,-8.0)
+    {\textbf{Base vetorial}\tech{ChromaDB}};
+
+  \node[c4artifact, text width=26mm, minimum height=13mm, fill=pmxPaper,
+        draw=pmxAxis, text=pmxInk] (csv) at (20.0,-4.3)
+    {\textbf{\arq{banner.csv}}\desc{\num{166796} linhas}};
+  \node[c4artifact, text width=26mm, minimum height=13mm, fill=pmxPaper,
+        draw=pmxAxis, text=pmxInk] (pdf) at (20.0,-7.0)
+    {\textbf{\arq{Doc1..Doc6.pdf}}\desc{Procedimentos}};
+
+  \draw[c4rel] (dat.south) -- (3.0,-3.5);
+  \draw[c4rel] (dat.east) -- (7.0,-3.5)
+    node[cxlabel, pos=0.65, above=1pt, sloped]{CLI};
+  \draw[c4rel] (dat.east) -- (12.6,-3.5);
+  \draw[c4rel] (csv.west) -- (4.9,-4.3)
+    node[cxlabel, pos=0.22, above=1pt]{leitura};
+  \draw[c4rel] (pdf.west) -- (15.6,-4.6);
+  \draw[c4rel] (etl.south) -- (pg.north)
+    node[cxlabel, midway, right=2pt]{carga};
+  \draw[c4rel] (tr.south) -- (art.north)
+    node[cxlabel, midway, right=2pt]{gravação};
+  \draw[c4rel] (idoc.south) -- (ch.north)
+    node[cxlabel, midway, right=2pt]{indexação};
+
+\end{tikzpicture}}
+\caption[C4 nível 2 --- plano de preparação]{C4 nível 2, plano de preparação. É
+  deliberadamente offline: treinar ou reindexar é operação auditada, não
+  contínua. O \arq{banner.csv} nunca entra na imagem de contêiner --- a carga é
+  feita da máquina do operador apontando para o banco de destino.}
+\label{fig:c4l2batch}
+\end{figure}
+
+\subsection{Catálogo de contêineres}
+
+\begin{table}[H]
+\caption{Catálogo de contêineres do sistema}
+\label{tab:conteineres}
+\begin{tabularx}{\linewidth}{@{}L{27mm}L{28mm}X@{}}
+\toprule
+\headrow \thd{Contêiner} & \thd{Tecnologia} & \thd{Responsabilidade}\\
+\midrule
+Interface & Streamlit 1.38+, Plotly & Renderizar painéis, formulários e
+  conversa. Não possui lógica de domínio nem acesso a dados.\\
+\zebra API de aplicação & FastAPI, Uvicorn & Única porta de entrada de domínio:
+  diagnóstico, prescrição, conversa, analítica, documentos e saúde.\\
+\textit{Worker} de ingestão & paho-mqtt 2.1+ & Consumir telemetria, validar,
+  persistir de forma idempotente, acionar diagnóstico e publicar alertas.\\
+\zebra \textit{Broker} MQTT & Eclipse Mosquitto 2 & Transportar telemetria,
+  alertas e rejeições entre planta e sistema.\\
+Histórico & PostgreSQL 16 & Armazenar eventos, taxonomia, documentos, cobertura
+  e auditoria de diagnósticos; executar as agregações analíticas.\\
+\zebra Base vetorial & ChromaDB (HNSW, cosseno) & Indexar \textit{chunks} com
+  metadados; ser a fonte de verdade da cobertura documental.\\
+Artefatos de ML & joblib & Persistir padronizador, classificador, índice de
+  vizinhos e metadados do índice.\\
+\zebra \textit{Scripts} de preparação & Python 3.12 (CLI) & Executar ETL,
+  treino, ingestão documental e simulação de sensor.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ===========================================================================
+\section{C4 nível 3 --- Componentes da API}
+\label{sec:c4nivel3}
+
+O contêiner de API concentra a lógica de domínio. Seus componentes estão
+organizados em três camadas mais uma faixa transversal; as dependências apontam
+sempre para baixo, o que mantém o domínio independente da infraestrutura.
+
+\begin{landscape}
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  % ---- faixas
+  \draw[c4boundary, fill=pmxBlue!5] (0.6,-0.5) rectangle (23.4,-3.6);
+  \node[c4boundarylbl, fill=pmxSurface] at (1.0,-0.35)
+    {Camada de interface HTTP};
+  \draw[c4boundary, fill=pmxGreen!4] (0.6,-3.9) rectangle (23.4,-7.1);
+  \node[c4boundarylbl, fill=pmxSurface] at (1.0,-3.75)
+    {Camada de domínio};
+  \draw[c4boundary, fill=pmxYellow!5] (0.6,-7.7) rectangle (23.4,-10.9);
+  \node[c4boundarylbl, fill=pmxSurface] at (1.0,-7.55)
+    {Camada de acesso a recursos};
+  \draw[c4boundary, fill=pmxPaper] (0.6,-11.5) rectangle (23.4,-13.9);
+  \node[c4boundarylbl, fill=pmxSurface] at (1.0,-11.35)
+    {Faixa transversal};
+
+  % ---- camada HTTP
+  \node[c4component, text width=44mm, minimum height=14mm] (rt) at (7.0,-2.1)
+    {\textbf{Roteadores REST}\tech{src/api/main.py}\desc{\cd{/diagnose}
+     \cd{/chat} \cd{/stats} \cd{/events} \cd{/documents} \cd{/health}
+     \cd{/analytics/*}}};
+  \node[c4component, text width=40mm, minimum height=14mm] (dep) at (16.5,-2.1)
+    {\textbf{Injeção de dependências}\tech{src/api/deps.py}\desc{Sessão de
+     banco, cliente de linguagem, agente --- substituíveis em teste}};
+
+  % ---- camada de domínio
+  \node[c4component, text width=36mm, minimum height=15mm] (mot) at (3.2,-5.5)
+    {\textbf{Motor de diagnóstico}\tech{src/ml/diagnose.py}\desc{LightGBM + KNN
+     + gate de confiança}};
+  \node[c4component, text width=36mm, minimum height=15mm] (rag) at (8.0,-5.5)
+    {\textbf{Serviço RAG}\tech{src/rag/service.py}\desc{Recupera, monta
+     \textit{prompt}, cita}};
+  \node[c4component, text width=34mm, minimum height=15mm, fill=pmxOrangeWash,
+        draw=pmxOrange] (gd) at (12.6,-5.5)
+    {\textbf{\textit{Guardrail} de cobertura}\tech{src/rag/store.py}\desc{Decisão
+     determinística}};
+  \node[c4component, text width=36mm, minimum height=15mm] (ag) at (17.2,-5.5)
+    {\textbf{Agente e ferramentas}\tech{src/llm/agent*.py}\desc{4 ferramentas,
+     memória de sessão}};
+  \node[c4component, text width=30mm, minimum height=15mm] (an) at (21.4,-5.5)
+    {\textbf{Agregações analíticas}\tech{src/api/analytics.py}};
+
+  % ---- camada de acesso
+  \node[c4component, text width=34mm, minimum height=14mm] (orm) at (3.1,-9.3)
+    {\textbf{Modelos ORM}\tech{src/core/db.py}\desc{SQLAlchemy 2.0}};
+  \node[c4component, text width=34mm, minimum height=14mm] (vs) at (7.7,-9.3)
+    {\textbf{Adaptador vetorial}\tech{src/rag/store.py}\desc{ChromaDB}};
+  \node[c4component, text width=34mm, minimum height=14mm] (llm) at (12.3,-9.3)
+    {\textbf{Cliente de linguagem}\tech{src/llm/client.py}\desc{Protocolo
+     substituível}};
+  \node[c4component, text width=32mm, minimum height=14mm] (cn) at (16.7,-9.3)
+    {\textbf{Canonizador}\tech{src/etl/canonize.py}};
+  \node[c4component, text width=32mm, minimum height=14mm] (bs) at (21.0,-9.3)
+    {\textbf{\textit{Bootstrap} documental}\tech{src/rag/bootstrap.py}};
+
+  % ---- transversal
+  \node[c4component, text width=42mm, minimum height=11mm] (cfg) at (7.0,-12.7)
+    {\textbf{Configuração}\tech{src/core/config.py --- pydantic-settings}};
+  \node[c4component, text width=42mm, minimum height=11mm] (sch) at (16.0,-12.7)
+    {\textbf{Esquemas de domínio}\tech{src/core/schemas.py --- pydantic v2}};
+
+  % ---- relações principais
+  \draw[c4rel] (5.2,-2.85) -- (3.2,-4.75);
+  \draw[c4rel] (6.4,-2.85) -- (7.4,-4.75);
+  \draw[c4rel] (7.6,-2.85) -- (12.0,-4.75);
+  \draw[c4rel] (8.6,-2.85) -- (20.8,-4.75);
+  \draw[c4rel] (dep.south) -- (17.2,-4.75);
+  \draw[c4relhi] (mot.east) -- (rag.west)
+    node[cxlabel, midway, above=2pt]{família};
+  \draw[c4relhi] (rag.east) -- (gd.west)
+    node[cxlabel, midway, above=2pt]{consulta};
+  \draw[c4rel] (ag.west) -- (gd.east)
+    node[cxlabel, midway, above=2pt]{reutiliza};
+  \draw[c4rel] (mot.south) -- (3.1,-8.6);
+  \draw[c4rel] (rag.south) -- (7.7,-8.6);
+  \draw[c4rel] (gd.south) -- (12.3,-8.6);
+  \draw[c4rel] (ag.south) -- (16.7,-8.6);
+  \draw[c4rel] (an.south) -- (21.0,-8.6);
+  \draw[c4reldash] (cfg.north) -- (7.7,-10.0);
+  \draw[c4reldash] (sch.north) -- (16.7,-10.0);
+
+\end{tikzpicture}}
+\caption[C4 nível 3 --- componentes da API]{C4 nível 3: componentes do
+  contêiner de API. Em destaque laranja, o \textit{guardrail} de cobertura: ele
+  fica \emph{entre} o motor de diagnóstico e a geração de texto, e é o único
+  componente com poder de impedir a chamada ao modelo de linguagem. As setas
+  em laranja marcam o caminho crítico da garantia exigida pelo enunciado.}
+\label{fig:c4l3}
+\end{figure}
+\end{landscape}
+
+% ===========================================================================
+\section{C4 nível 4 --- Código do motor de diagnóstico}
+\label{sec:c4nivel4}
+
+O nível 4 é aplicado de forma seletiva, como recomenda o
+próprio modelo~\cite{brown2026c4}: apenas onde a estrutura de classes carrega
+uma decisão de projeto. Aqui, esse ponto é o motor de diagnóstico e o esquema
+de evento --- o esquema é \textbf{único} para API, MQTT e ETL, o que torna
+impossível divergência de validação entre os três caminhos de entrada.
+
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \node[classe, text width=46mm] (ev) at (3.4,0)
+    {\etitulo{SensorEvent}\nodepart{two}
+     \cd{+ id: int | None}\\
+     \cd{+ created\_at: datetime | None}\\
+     \cd{+ fault: str | None}\\
+     \cd{+ <18 grandezas de sensor: float>}\nodepart{three}
+     \cd{+ feature\_vector() -> list[float]}};
+
+  \node[classe, text width=52mm] (eng) at (12.2,0)
+    {\etitulo{DiagnosisEngine}\nodepart{two}
+     \cd{- scaler: StandardScaler}\\
+     \cd{- clf: LGBMClassifier}\\
+     \cd{- knn: NearestNeighbors}\\
+     \cd{- index\_meta: DataFrame}\\
+     \cd{- canonizer: LabelCanonizer}\nodepart{three}
+     \cd{+ diagnose(ev) -> DiagnosisResult}\\
+     \cd{- \_similar\_events(fam, nb)}\\
+     \cd{- \_confidence(prob, agr) -> str}};
+
+  \node[classe, text width=46mm] (res) at (12.2,-6.6)
+    {\etitulo{DiagnosisResult}\tech{dataclass}\nodepart{two}
+     \cd{+ family: str}\\
+     \cd{+ is\_fault: bool}\\
+     \cd{+ probability: float}\\
+     \cd{+ knn\_agreement: float}\\
+     \cd{+ confidence: str}\\
+     \cd{+ similar: SimilarEvents}\nodepart{three}};
+
+  \node[classe, text width=46mm] (sim) at (3.4,-6.6)
+    {\etitulo{SimilarEvents}\nodepart{two}
+     \cd{+ count: int}\\
+     \cd{+ first\_seen / last\_seen}\\
+     \cd{+ freq\_per\_day: float | None}\\
+     \cd{+ timeline: list[dict]}\\
+     \cd{+ neighbor\_ids: list[int]}\\
+     \cd{+ neighbor\_agreement: float}\nodepart{three}};
+
+  \node[classe, text width=44mm] (can) at (3.4,-12.4)
+    {\etitulo{LabelCanonizer}\nodepart{two}
+     \cd{- families: dict[str, Family]}\\
+     \cd{- \_rules: list[(Pattern, str)]}\nodepart{three}
+     \cd{+ canonize(raw) -> Family}\\
+     \cd{+ fault\_families() -> list[str]}};
+
+  \node[classe, text width=44mm] (resp) at (12.2,-12.4)
+    {\etitulo{DiagnoseResponse}\tech{contrato da API}\nodepart{two}
+     \cd{+ predicted\_fault, is\_fault}\\
+     \cd{+ probability, knn\_agreement}\\
+     \cd{+ confidence}\\
+     \cd{+ similar\_events: SimilarEvents}\\
+     \cd{+ documented: bool}\\
+     \cd{+ prescription: Prescription | None}\\
+     \cd{+ suggestion: str | None}\nodepart{three}};
+
+  % relações
+  \draw[depend] (eng.west) -- (ev.east)
+    node[cxlabel, midway, above=1pt]{$\ll$usa$\gg$};
+  \draw[depend] (eng.south) -- (res.north)
+    node[cxlabel, midway, right=2pt]{$\ll$produz$\gg$};
+  \draw[compos] (res.west) -- (sim.east)
+    node[cxlabel, midway, above=1pt]{1};
+  \draw[compos] (eng.south west) -- (4.9,-4.4)
+    node[cxlabel, pos=0.55, above=1pt, sloped]{usa};
+  \draw[compos] (5.0,-9.0) -- (4.4,-10.6);
+  \draw[depend] (res.south) -- (resp.north)
+    node[cxlabel, midway, right=2pt]{$\ll$mapeia para$\gg$};
+  \draw[compos] (resp.west) -- (5.6,-12.4)
+    node[cxlabel, midway, above=1pt]{1};
+
+\end{tikzpicture}}
+\caption[C4 nível 4 --- classes do motor de diagnóstico]{C4 nível 4: classes do
+  motor de diagnóstico. \cd{SensorEvent} é o esquema único de entrada,
+  compartilhado por API, \textit{worker} MQTT e ETL. \cd{DiagnosisResult} é
+  interno ao domínio; \cd{DiagnoseResponse} é o contrato público da API --- a
+  separação permite evoluir um sem quebrar o outro.}
+\label{fig:c4l4}
+\end{figure}
+
+% ===========================================================================
+\section{Fluxo do diagnóstico completo}
+\label{sec:fluxos}
+
+O diagrama de sequência abaixo mostra o caminho crítico --- o que acontece entre
+a submissão do evento e a resposta. Observe a posição do \textit{guardrail}: ele
+decide \emph{antes} de qualquer interação com o modelo de linguagem, e o ramo
+alternativo simplesmente não chega ao Vertex AI.
+
+\begin{landscape}
+\begin{figure}[H]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \raia{1.6}{-13.3}{Solicitante}{técnico ou \textit{worker}}
+  \raia{5.4}{-13.3}{API}{FastAPI}
+  \raia{9.2}{-13.3}{Motor}{LightGBM + KNN}
+  \raia{13.0}{-13.3}{Dados}{Postgres + artefatos}
+  \raia{16.8}{-13.3}{\textit{Guardrail} + RAG}{Chroma}
+  \raiaext{20.8}{-13.3}{Vertex AI}{Gemini}
+
+  \msgs{1.6}{5.4}{-1.1}{\cd{POST /api/v1/diagnose} (JSON do evento)}
+  \msgself{5.4}{-1.75}{valida esquema \cd{SensorEvent}}
+  \msgs{5.4}{9.2}{-2.65}{\cd{engine.diagnose(event)}}
+  \msgself{9.2}{-3.15}{18 brutas + 5 derivadas, padronizadas}
+  \msgs{9.2}{13.0}{-4.05}{\cd{predict\_proba} + \cd{kneighbors} (k=25)}
+  \msgr{13.0}{9.2}{-4.65}{família, probabilidade, 25 vizinhos}
+  \msgself{9.2}{-5.25}{concordância e gate de confiança}
+  \msgs{9.2}{13.0}{-6.2}{estatísticas históricas da família}
+  \msgr{13.0}{9.2}{-6.8}{contagem, período, freq./dia, série mensal}
+  \msgr{9.2}{5.4}{-7.45}{\cd{DiagnosisResult}}
+
+  % --- bloco alternativo
+  \draw[seqframe] (4.6,-7.85) rectangle (22.4,-12.5);
+  \node[seqframelbl] at (4.6,-7.85) {alt};
+  \draw[seqframe] (4.6,-10.35) -- (22.4,-10.35);
+  \node[seqcond] at (5.7,-8.15) {[família de falha \textbf{com} documento indexado]};
+  \node[seqcond] at (5.7,-10.65) {[família de falha \textbf{sem} documento indexado]};
+
+  \msgs{5.4}{16.8}{-8.80}{\cd{prescribe(family, event)}}
+  \msgs{16.8}{20.8}{-9.40}{\textit{embedding} + geração em contexto fechado}
+  \msgr{16.8}{5.4}{-10.05}{instruções em Markdown + citações dos metadados}
+
+  \msgs{5.4}{16.8}{-11.25}{\cd{is\_documented(family)} $\rightarrow$ \textbf{falso}}
+  \node[cxlabel, text width=56mm, anchor=west, fill=pmxOrangeWash,
+        draw=pmxOrange, line width=0.6pt] at (10.6,-11.95)
+    {\textbf{O Vertex AI não é chamado.} A API devolve o aviso de falha não
+     documentada e a sugestão de registro.};
+
+  \msgr{5.4}{1.6}{-13.05}{\cd{DiagnoseResponse} + auditoria persistida}
+
+\end{tikzpicture}}
+\caption[Sequência do diagnóstico]{Diagrama de sequência do diagnóstico
+  completo. O bloco \cd{alt} explicita a garantia do enunciado: no ramo
+  inferior, a raia do Vertex AI permanece intocada --- não há chamada ao modelo
+  de linguagem quando a falha não está documentada.}
+\label{fig:seqdiagnose}
+\end{figure}
+\end{landscape}
+
+% ===========================================================================
+\section{Registro de decisões arquiteturais}
+\label{sec:adrs}
+
+Cada decisão está registrada no formato ADR~\cite{nygard2011adr}: contexto,
+decisão, justificativa e alternativa rejeitada. O valor do registro está na
+última coluna --- saber o que foi \emph{descartado} e por quê é o que evita
+refazer a discussão a cada revisão.
+
+\begin{table}[H]
+\caption{Registro de decisões arquiteturais (ADR)}
+\label{tab:adrs}
+\begin{tabularx}{\linewidth}{@{}L{14mm}L{38mm}XL{34mm}@{}}
+\toprule
+\headrow \thd{ID} & \thd{Decisão} & \thd{Justificativa} &
+  \thd{Alternativa rejeitada}\\
+\midrule
+\endhead
+\adrr{ADR-01} & ChromaDB persistente e embarcado como base vetorial &
+  Roda na própria estação, aceita filtro por metadados (essencial para
+  restringir a busca a uma família) e usa índice HNSW~\cite{malkov2020hnsw}.
+  Zero infraestrutura adicional. &
+  FAISS (sem metadados nativos); \textit{pgvector} (acoplaria a recuperação ao
+  banco relacional).\\
+\zebra \adrr{ADR-02} & \cd{gemini-embedding-2} com dimensionalidade 768 &
+  Multilíngue, contexto de \num{8192} \textit{tokens} e dimensões
+  aninhadas~\cite{kusupati2022matryoshka}, o que permite truncar de
+  \num{3072} para 768 sem retreino e com perda marginal de qualidade. &
+  \cd{gemini-embedding-001}; modelo local de sentenças~\cite{reimers2019sbert}
+  (qualidade inferior em português técnico).\\
+\adrr{ADR-03} & \cd{gemini-3.6-flash} para geração, \cd{temperature=0.2} &
+  Baixa latência e custo, contexto amplo, e o identificador do modelo é
+  parametrizado por variável de ambiente --- trocar de modelo não exige alterar
+  código. &
+  Modelo local no hardware alvo (qualidade insuficiente em português técnico e
+  competiria por memória com o índice KNN).\\
+\zebra \adrr{ADR-04} & Diagnóstico híbrido: LightGBM \emph{e} KNN &
+  São respostas a perguntas diferentes. O KNN responde literalmente
+  \enquote{quais registros históricos se parecem com este}; o classificador dá
+  o tipo com probabilidade. A concordância entre os dois vira medida de
+  confiança sem custo adicional. &
+  Só KNN (não fornece probabilidade calibrada); rede neural profunda
+  (desnecessária em dado tabular deste porte~\cite{grinsztajn2022tree}).\\
+\adrr{ADR-05} & Canonicalização de rótulos por regras \textit{regex}
+  ordenadas em YAML &
+  Transforma \num{151} rótulos ruidosos em 17 famílias de forma auditável ---
+  cada regra é legível e revisável. Rótulo sem regra gera erro explícito, nunca
+  classificação silenciosa. &
+  Agrupamento automático (não auditável, e erro de grafia não é problema de
+  similaridade semântica).\\
+\zebra \adrr{ADR-06} & FastAPI como camada de serviço; a interface só consome a
+  API &
+  Torna a solução integrável por SCADA, CMMS ou \textit{historian} sem
+  reimplementar domínio. A interface fica substituível. &
+  Monólito em Streamlit (rápido de escrever, impossível de integrar).\\
+\adrr{ADR-07} & PostgreSQL como banco corporativo simulado &
+  Permite ETL realista e agregações analíticas em SQL --- inclusive
+  \cd{percentile\_cont} e decomposição de variância, usados no diagnóstico do
+  vazamento. &
+  DuckDB ou SQLite (não representariam o ambiente corporativo e não têm os
+  recursos estatísticos usados).\\
+\zebra \adrr{ADR-08} & \textit{docker-compose} para o ambiente local &
+  Cinco serviços sobem com um comando; reprodutível na estação alvo. &
+  Kubernetes (complexidade desproporcional ao escopo).\\
+\adrr{ADR-09} & \textit{Guardrail} de cobertura determinístico: família
+  documentada $\Leftrightarrow$ possui \textit{chunks} indexados &
+  É requisito duro do enunciado. Delegar a decisão ao modelo de linguagem
+  reintroduziria exatamente o risco que o requisito quer eliminar. A regra é
+  uma consulta ao índice, não uma inferência. &
+  Deixar o modelo decidir se \enquote{parece haver} documento.\\
+\zebra \adrr{ADR-10} & Ingestão por MQTT com \textit{broker}, \textit{worker} e
+  simulador &
+  É o protocolo de fato do chão de fábrica~\cite{oasis2019mqtt} e permite
+  demonstrar o ciclo completo sensor $\rightarrow$ diagnóstico $\rightarrow$
+  alerta $\rightarrow$ planta. &
+  Somente REST (não demonstra integração industrial); OPC UA (instalação pesada
+  --- registrado como evolução).\\
+\adrr{ADR-11} & Agente com ferramentas \textbf{apenas} na conversa; o
+  diagnóstico permanece determinístico &
+  O agente agrega valor onde há decisão dinâmica de ferramenta --- perguntas
+  exploratórias. No caminho crítico, um laço agêntico enfraqueceria as
+  garantias anti-alucinação e a previsibilidade de latência exigidas. &
+  Agentificar todo o pipeline (imprevisível e caro no fluxo MQTT);
+  \textit{function calling} manual (perderia sessão e orquestração prontas).\\
+\zebra \adrr{ADR-12} & Imagem de contêiner única para API, interface e
+  \textit{worker} &
+  Uma só superfície de \textit{build}; garante que os três executam exatamente
+  o mesmo código. O papel é definido pelo comando de inicialização. &
+  Três imagens distintas (triplicaria o tempo de \textit{build} e permitiria
+  divergência de versão entre serviços).\\
+\adrr{ADR-13} & Infraestrutura declarada em código, com segredos preservados
+  fora do arquivo &
+  O arquivo versionado é a fonte de verdade da topologia; o plano de mudanças é
+  revisável antes de aplicar. Nomes de variáveis sensíveis são versionados,
+  valores nunca. &
+  Configuração manual em painel (não reproduzível, não revisável).\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ===========================================================================
+\section{Atributos de qualidade e táticas}
+
+Cada atributo de qualidade priorizado foi endereçado por uma tática concreta e
+verificável~\cite{bass2012architecture}. A coluna de verificação é o que
+distingue uma tática de uma intenção.
+
+\begin{tabularx}{\linewidth}{@{}L{28mm}L{50mm}X@{}}
+\toprule
+\headrow \thd{Atributo} & \thd{Tática aplicada} & \thd{Como se verifica}\\
+\midrule
+Correção factual & Guardrail determinístico + citação derivada de metadados +
+  contexto fechado & Teste que assegura que o cliente de linguagem \textbf{não}
+  é chamado para família sem documento.\\
+\zebra Confiabilidade da ingestão & QoS 1 + \cd{merge} idempotente por chave
+  primária + fila de rejeição & Publicar o mesmo evento duas vezes produz uma
+  linha; \textit{payload} inválido aparece na DLQ.\\
+Disponibilidade & Degradação graciosa do agente para RAG de um passo;
+  \textit{bootstrap} documental em \textit{thread} separada &
+  Remover credenciais mantém a conversa funcional; a instância passa o
+  \textit{healthcheck} durante a indexação inicial.\\
+\zebra Testabilidade & Cliente de linguagem como protocolo; injeção de
+  dependências com sobrescrita em teste & 63 testes executam sem rede e sem
+  credenciais.\\
+Desempenho & Agregações em SQL sob demanda; artefatos carregados uma única vez
+  em processo (\textit{singleton} memorizado) &
+  Agregação em torno de \SI{0.2}{\second} sobre \num{166796} eventos.\\
+\zebra Manutenibilidade & Esquema de domínio único para os três caminhos de
+  entrada; dependências apontando sempre para baixo &
+  Alterar uma grandeza de sensor exige edição em um único lugar.\\
+Segurança & Segredos fora do repositório; credencial materializada com
+  permissão \cd{0600}; \textit{broker} com autenticação obrigatória quando
+  exposto & Inspeção do repositório e da imagem; \textit{log} do
+  \textit{broker} confirmando autenticação habilitada.\\
+\zebra Auditabilidade & Tabela de diagnósticos; métricas versionadas em
+  arquivo; ETL que falha diante de rótulo desconhecido &
+  Cada resposta emitida é recuperável no banco.\\
+\bottomrule
+\end{tabularx}
+
+\begin{decisao}
+A fronteira mais importante da arquitetura não é entre camadas de
+\textit{software}: é entre o que é \textbf{determinístico} e o que é
+\textbf{generativo}. Tudo que constitui garantia --- cobertura documental,
+citações, contagens históricas, classificação --- é determinístico e testável.
+O modelo generativo atua apenas na redação do texto final, sobre um contexto que
+ele não escolheu e não pode ampliar. Essa separação é o que permite afirmar,
+com verificação e não com esperança, que o sistema respeita a restrição de
+responder somente sobre falhas documentadas.
+\end{decisao}

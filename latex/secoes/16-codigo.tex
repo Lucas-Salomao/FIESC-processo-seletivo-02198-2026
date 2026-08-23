@@ -1,0 +1,726 @@
+% ===========================================================================
+%  16 — Documentacao de codigo
+% ===========================================================================
+\chapter{Documentação de código}
+\label{cap:codigo}
+
+Este capítulo é a referência de código do projeto: para cada módulo, seu
+propósito, sua interface pública, os invariantes que ele mantém e os pontos por
+onde estendê-lo. São \num{3514} linhas de Python em 24 módulos.
+
+\section{Estrutura do repositório}
+
+\begin{lstlisting}[caption={Estrutura do repositório}, label={lst:arvore}]
+FIESC/
+|-- src/
+|   |-- core/                 configuracao, esquemas de dominio, ORM, severidade
+|   |   |-- config.py         (111) Settings + ponte para o ambiente das libs de nuvem
+|   |   |-- schemas.py        (111) esquemas pydantic UNICOS (API + MQTT + ETL)
+|   |   |-- db.py             (110) modelos SQLAlchemy 2.0 e fabrica de sessao
+|   |   +-- severity.py        (78) zonas ISO 10816 e severidade relativa
+|   |-- etl/
+|   |   |-- canonize.py        (59) canonicalizacao auditavel de rotulos
+|   |   +-- label_map.yaml          17 familias + regras regex ordenadas
+|   |-- ml/
+|   |   |-- features.py        (43) features fisicas derivadas (treino + inferencia)
+|   |   |-- train.py          (178) tres protocolos de avaliacao + modelo final
+|   |   +-- diagnose.py       (108) motor de inferencia (LightGBM + KNN + confianca)
+|   |-- rag/
+|   |   |-- chunking.py        (84) extracao de PDF, secoes, fallback de OCR
+|   |   |-- store.py           (92) ChromaDB + GUARDRAIL de cobertura
+|   |   |-- service.py         (86) orquestracao RAG e citacoes deterministicas
+|   |   |-- bootstrap.py       (78) indexacao automatica no primeiro boot
+|   |   +-- coverage.yaml           cobertura documental inicial
+|   |-- llm/
+|   |   |-- client.py          (89) protocolo do cliente + implementacao Gemini
+|   |   |-- prompts.py         (77) instrucoes de sistema e montagem de prompt
+|   |   |-- agent.py          (112) agente ADK, sessoes no Postgres, fallback
+|   |   +-- agent_tools.py    (213) as 4 ferramentas + coletor de citacoes
+|   |-- api/
+|   |   |-- main.py           (280) roteadores REST e ciclo de vida
+|   |   |-- deps.py            (28) dependencias injetaveis (substituiveis em teste)
+|   |   +-- analytics.py      (240) agregacoes SQL sob demanda
+|   |-- ingestion/
+|   |   +-- mqtt_worker.py    (145) worker MQTT: valida, persiste, diagnostica, alerta
+|   +-- ui/
+|       |-- app.py            (321) navegacao, diagnostico, conversa, documentos
+|       |-- dashboard.py      (730) quatro paineis analiticos
+|       |-- theme.py          (121) paleta validada e chrome dos graficos
+|       +-- api_client.py      (20) cliente HTTP com cache
+|-- scripts/                  ingest_data, ingest_docs, simulate_sensor
+|-- tests/                    conftest + 5 arquivos, 63 testes
+|-- artifacts/                modelos treinados (gerados, fora do controle de versao)
+|-- documentos/               Doc1..Doc6.pdf + banner.csv
+|-- .railway/railway.ts       infraestrutura como codigo
+|-- Dockerfile                imagem unica (api / worker / ui via start command)
+|-- docker-compose.yml        topologia local
++-- .github/workflows/ci.yml  lint -> testes -> build
+\end{lstlisting}
+
+\section{Grafo de dependências}
+
+As dependências apontam sempre \emph{para baixo}. Nenhum módulo de camada
+inferior importa de camada superior --- propriedade que permite testar o domínio
+sem levantar a aplicação.
+
+\begin{landscape}
+\begin{figure}[H]
+\centering
+\fitpage{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+  \draw[c4boundary, fill=pmxBlue!4] (0.5,-0.4) rectangle (23.5,-2.9);
+  \node[c4boundarylbl, fill=pmxSurface] at (0.9,-0.25) {Pontos de entrada};
+  \draw[c4boundary, fill=pmxGreen!4] (0.5,-3.5) rectangle (23.5,-6.2);
+  \node[c4boundarylbl, fill=pmxSurface] at (0.9,-3.35) {Orquestração};
+  \draw[c4boundary, fill=pmxYellow!5] (0.5,-6.8) rectangle (23.5,-9.5);
+  \node[c4boundarylbl, fill=pmxSurface] at (0.9,-6.65) {Serviços e adaptadores};
+  \draw[c4boundary, fill=pmxPaper] (0.5,-10.1) rectangle (23.5,-12.6);
+  \node[c4boundarylbl, fill=pmxSurface] at (0.9,-9.95) {Núcleo};
+
+  % entradas
+  \node[c4component, text width=28mm, minimum height=11mm] (main) at (3.2,-1.7)
+    {\cd{api.main}};
+  \node[c4component, text width=28mm, minimum height=11mm] (wk) at (8.4,-1.7)
+    {\cd{ingestion.mqtt\_worker}};
+  \node[c4component, text width=28mm, minimum height=11mm] (uiapp) at (13.6,-1.7)
+    {\cd{ui.app} + \cd{ui.dashboard}};
+  \node[c4component, text width=30mm, minimum height=11mm] (scr) at (19.4,-1.7)
+    {\cd{scripts.*}};
+
+  % orquestracao
+  \node[c4component, text width=26mm, minimum height=11mm] (deps) at (2.6,-4.9)
+    {\cd{api.deps}};
+  \node[c4component, text width=26mm, minimum height=11mm] (anl) at (6.4,-4.9)
+    {\cd{api.analytics}};
+  \node[c4component, text width=26mm, minimum height=11mm] (svc) at (10.2,-4.9)
+    {\cd{rag.service}};
+  \node[c4component, text width=26mm, minimum height=11mm] (ag) at (14.0,-4.9)
+    {\cd{llm.agent}};
+  \node[c4component, text width=26mm, minimum height=11mm] (bs) at (17.8,-4.9)
+    {\cd{rag.bootstrap}};
+  \node[c4component, text width=26mm, minimum height=11mm] (dg) at (21.4,-4.9)
+    {\cd{ml.diagnose}};
+
+  % servicos
+  \node[c4component, text width=26mm, minimum height=11mm] (tools) at (2.6,-8.2)
+    {\cd{llm.agent\_tools}};
+  \node[c4component, text width=26mm, minimum height=11mm, fill=pmxOrangeWash,
+        draw=pmxOrange] (store) at (6.4,-8.2)
+    {\cd{rag.store}\\{\scriptsize \textit{guardrail}}};
+  \node[c4component, text width=26mm, minimum height=11mm] (chk) at (10.2,-8.2)
+    {\cd{rag.chunking}};
+  \node[c4component, text width=26mm, minimum height=11mm] (cli) at (14.0,-8.2)
+    {\cd{llm.client}};
+  \node[c4component, text width=26mm, minimum height=11mm] (pr) at (17.8,-8.2)
+    {\cd{llm.prompts}};
+  \node[c4component, text width=26mm, minimum height=11mm] (ft) at (21.4,-8.2)
+    {\cd{ml.features}};
+
+  % nucleo
+  \node[c4component, text width=26mm, minimum height=11mm] (sch) at (4.0,-11.4)
+    {\cd{core.schemas}};
+  \node[c4component, text width=26mm, minimum height=11mm] (db) at (8.4,-11.4)
+    {\cd{core.db}};
+  \node[c4component, text width=26mm, minimum height=11mm] (cfg) at (12.8,-11.4)
+    {\cd{core.config}};
+  \node[c4component, text width=26mm, minimum height=11mm] (cn) at (17.2,-11.4)
+    {\cd{etl.canonize}};
+  \node[c4component, text width=26mm, minimum height=11mm] (sv) at (21.4,-11.4)
+    {\cd{core.severity}};
+
+  % dependencias
+  \draw[c4rel] (main.south) -- (2.6,-4.3);
+  \draw[c4rel] (3.6,-2.3) -- (6.4,-4.3);
+  \draw[c4rel] (4.0,-2.3) -- (10.2,-4.3);
+  \draw[c4rel] (4.2,-2.3) -- (17.8,-4.3);
+  \draw[c4rel] (4.4,-2.3) -- (21.0,-4.3);
+  \draw[c4rel] (deps.south) -- (2.6,-7.6);
+  \draw[c4rel] (2.9,-5.5) -- (13.6,-7.6);
+  \draw[c4rel] (svc.south) -- (6.8,-7.6);
+  \draw[c4rel] (10.4,-5.5) -- (17.6,-7.6);
+  \draw[c4rel] (ag.south) -- (3.0,-7.6);
+  \draw[c4rel] (bs.south) -- (6.6,-7.6);
+  \draw[c4rel] (dg.south) -- (21.4,-7.6);
+  \draw[c4rel] (store.south) -- (10.0,-7.6);
+  \draw[c4rel] (tools.south) -- (4.0,-10.8);
+  \draw[c4rel] (3.0,-8.8) -- (8.0,-10.8);
+  \draw[c4rel] (store.south west) -- (4.2,-10.8);
+  \draw[c4rel] (cli.south) -- (12.8,-10.8);
+  \draw[c4rel] (ft.south) -- (4.6,-10.8);
+  \draw[c4rel] (21.2,-8.8) -- (17.6,-10.8);
+  \draw[c4rel] (wk.south) -- (8.8,-2.9) -- (8.8,-10.8);
+  \draw[c4rel] (scr.south) -- (19.4,-3.0) -- (19.4,-10.8) -- (17.6,-10.8);
+  \draw[c4reldash] (uiapp.south) -- (13.6,-3.1) -- (12.4,-3.1)
+    node[cxlabel, pos=0.7, below=1pt]{apenas HTTP};
+  \draw[c4rel] (anl.south) -- (4.4,-10.8);
+  \draw[c4rel] (21.6,-8.8) -- (21.4,-10.8);
+
+\end{tikzpicture}}
+\caption[Grafo de dependências]{Grafo de dependências entre módulos. O
+  \textit{guardrail} (em laranja) reside na camada de adaptadores, e é
+  alcançado tanto pela orquestração RAG quanto pelas ferramentas do agente ---
+  uma única implementação, dois caminhos de uso. A interface depende do sistema
+  \emph{apenas} por HTTP.}
+\label{fig:deps}
+\end{figure}
+\end{landscape}
+
+% ===========================================================================
+\section{Pacote \cd{src/core} --- núcleo}
+
+\subsection{\arq{config.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Fonte única de configuração, carregada de variáveis de ambiente com
+  valores padrão sensatos.\\
+\zebra Interface pública & \cd{Settings} (modelo de configuração);
+  \cd{get\_settings()} memorizado; \cd{ensure\_google\_env()}.\\
+Invariante & \cd{get\_settings()} devolve sempre a mesma instância. Alterar
+  configuração exige reiniciar o processo --- o que é a propriedade desejada:
+  configuração não muda em tempo de execução.\\
+\zebra Detalhe notável 1 & \textbf{Normalização de URL de banco}: provedores
+  gerenciados expõem \cd{postgresql://} ou o legado \cd{postgres://}; o
+  validador converte para o esquema com driver explícito. Sem isso, seria
+  necessário reescrever a variável no painel de cada ambiente.\\
+Detalhe notável 2 & \textbf{Materialização de credencial}: a credencial em
+  base64 é decodificada, \emph{validada como JSON} e escrita em arquivo
+  temporário com permissão \cd{0600}. A validação antecipada é o que transforma
+  \enquote{o serviço falha misteriosamente na primeira chamada} em \enquote{o
+  \textit{log} diz que a variável está inválida}.\\
+\zebra Detalhe notável 3 & \cd{ensure\_google\_env()} faz a ponte entre o objeto
+  de configuração e as variáveis de ambiente que as bibliotecas de nuvem leem
+  diretamente. É idempotente e usa atribuição condicional, respeitando valores
+  já presentes no ambiente.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{schemas.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Esquemas de domínio \textbf{únicos}, compartilhados por API,
+  \textit{worker} MQTT e ETL.\\
+\zebra Interface pública & \cd{FEATURE\_COLUMNS} (lista ordenada de 18 nomes);
+  \cd{SensorEvent}; \cd{SimilarEvents}; \cd{Citation}; \cd{Prescription};
+  \cd{DiagnoseResponse}; \cd{ChatRequest}; \cd{ChatResponse}.\\
+Invariante crítico & A \textbf{ordem} de \cd{FEATURE\_COLUMNS} é significativa:
+  ela define a ordem das colunas do vetor de \textit{features}, e portanto a
+  ordem esperada pelos artefatos treinados. Reordenar a lista sem retreinar
+  produz predições silenciosamente erradas.\\
+\zebra Decisão & \cd{SensorEvent} aceita campos extras e os ignora. Isso permite
+  enviar o registro original do conjunto de dados --- com as colunas redundantes
+  em unidades imperiais --- sem pré-processamento.\\
+Separação de contratos & \cd{DiagnoseResponse} é o contrato \emph{público};
+  \cd{DiagnosisResult} (em \arq{ml/diagnose.py}) é a estrutura \emph{interna}. A
+  separação permite evoluir um sem quebrar o outro.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{db.py} e \arq{severity.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Módulo} & \thd{Conteúdo e observações}\\
+\midrule
+\arq{db.py} & Modelos declarativos: \cd{FaultFamily}, \cd{LabelMap},
+  \cd{Event}, \cd{Document}, \cd{DocCoverage}, \cd{Diagnosis}. Fábricas
+  \cd{get\_engine}, \cd{get\_session\_factory} e \cd{create\_all}. A conexão usa
+  verificação prévia de vitalidade, o que evita a falha clássica de conexão
+  reciclada pelo provedor. \cd{Event.id} \textbf{não} tem geração automática ---
+  é a chave de idempotência da ingestão.\\
+\zebra \arq{severity.py} & Domínio de severidade vibracional reutilizável:
+  limites das zonas por classe de máquina, faixas contíguas para desenho de
+  bandas, \cd{classify\_zone} e \cd{relative\_severity}. A classe da máquina é
+  \emph{parâmetro}, não constante --- os limites dependem de potência e rigidez
+  da fundação~\cite{iso10816}. Classe inválida levanta exceção listando as
+  válidas.\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pacote \cd{src/etl}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Canonicalização auditável de rótulos brutos em famílias
+  canônicas.\\
+\zebra Interface pública & \cd{Family} (registro imutável);
+  \cd{LabelCanonizer.canonize(raw) -> Family};
+  \cd{LabelCanonizer.fault\_families()}; \cd{get\_canonizer()} memorizado;
+  \cd{UnknownLabelError}.\\
+Invariantes & (i) As regras são avaliadas na ordem de declaração e a primeira
+  que casa vence; (ii) toda regra aponta para família existente --- validado na
+  construção; (iii) rótulo sem regra \textbf{levanta exceção}, nunca retorna
+  valor padrão.\\
+\zebra Ponto de extensão & Acrescentar família ou regra é edição de YAML, sem
+  alteração de código. A ordem da lista de regras é parte da especificação: a
+  regra de estado operacional deve vir \emph{depois} das de falha.\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pacote \cd{src/ml}}
+
+\subsection{\arq{features.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Engenharia de \textit{features} física, compartilhada entre treino e
+  inferência.\\
+\zebra Interface pública & \cd{DERIVED\_COLUMNS}; \cd{MODEL\_COLUMNS} (as 23);
+  \cd{add\_derived\_features(df)}; \cd{feature\_matrix(df)}.\\
+Invariante crítico & \textbf{Este é o único lugar} onde as derivadas são
+  calculadas. Treino e inferência chamam a mesma função, o que torna a
+  divergência entre transformações estruturalmente impossível.\\
+\zebra Proteção numérica & $\varepsilon = 10^{-6}$ nos denominadores e limite
+  superior de 50 na ordem de rotação. Trata os 658 eventos com rotação nula sem
+  produzir infinitos nem valores extremos que distorceriam a padronização.\\
+\bottomrule
+\end{tabularx}
+
+\begin{lstlisting}[language=Python, caption={Cálculo das \textit{features} derivadas --- \arq{src/ml/features.py}}, label={lst:features}]
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adiciona as features derivadas (recebe DataFrame com FEATURE_COLUMNS)."""
+    out = df.copy()
+    rot_hz = np.maximum(out["rpm"].to_numpy(dtype=float) / 60.0, _EPS)
+
+    # Ordem do pico: os manuais descrevem assinaturas em multiplos da rotacao
+    out["x_peak_order"] = np.clip(out["x_peak_vel_comp_freq_hz"] / rot_hz, 0, _MAX_ORDER)
+    out["z_peak_order"] = np.clip(out["z_peak_vel_comp_freq_hz"] / rot_hz, 0, _MAX_ORDER)
+    # Radial x axial: desbalanceamento e radial; desalinhamento tem axial
+    out["radial_axial_ratio"] = out["x_rms_velocity_mm_s"] / (out["z_rms_velocity_mm_s"] + _EPS)
+    # Alta x baixa frequencia: defeitos de rolamento excitam alta frequencia
+    out["hf_lf_ratio_x"] = out["x_high_freq_rms_accel_g"] / (out["x_rms_acceleration_g"] + _EPS)
+    out["hf_lf_ratio_z"] = out["z_high_freq_rms_accel_g"] / (out["z_rms_acceleration_g"] + _EPS)
+    return out
+\end{lstlisting}
+
+\subsection{\arq{train.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Treinar e avaliar o motor de diagnóstico, produzindo os artefatos
+  servidos e o registro de métricas.\\
+\zebra Interface pública & \cd{load\_dataset(csv)};
+  \cd{session\_holdout\_mask(df, rng)}; \cd{train(csv, out\_dir) -> dict}.
+  Executável como módulo.\\
+Constantes & \cd{KNN\_NEIGHBORS=25};
+  \cd{SESSION\_TEST\_FRACTION=0.2}; \cd{RANDOM\_STATE=42}.\\
+\zebra Função notável & \cd{session\_holdout\_mask} implementa o protocolo
+  principal: para cada família, separa cerca de \SI{20}{\percent} das
+  \emph{sessões inteiras} (mínimo de uma, quando há pelo menos duas). Família
+  com sessão única fica integralmente no treino --- não há como avaliar
+  generalização entre campanhas com uma só campanha.\\
+Saída & Quatro artefatos e o registro de métricas com os três protocolos, as
+  classes, a lista de \textit{features} e o instante do treino. O modelo servido
+  é retreinado com todos os dados após as avaliações.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{diagnose.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Inferência: classe, probabilidade, vizinhos semelhantes e nível de
+  confiança.\\
+\zebra Interface pública & \cd{DiagnosisEngine(artifacts\_dir)};
+  \cd{DiagnosisEngine.diagnose(event) -> DiagnosisResult};
+  \cd{DiagnosisResult}; \cd{get\_engine\_singleton()}.\\
+Invariantes & (i) Os quatro artefatos são carregados na construção; (ii) o
+  \textit{singleton} memorizado garante uma única carga por processo --- crítico
+  porque o índice de vizinhos ocupa a maior parte da memória; (iii) a ordem das
+  colunas do vetor segue \cd{MODEL\_COLUMNS}.\\
+\zebra Método notável & \cd{\_similar\_events} agrega o histórico
+  \textbf{completo} da família prevista --- não apenas os 25 vizinhos --- para
+  produzir contagem, período, frequência diária e série mensal. Os vizinhos
+  entram na resposta como identificadores rastreáveis.\\
+Regra de confiança & \cd{\_confidence} usa o \emph{produto} de probabilidade e
+  concordância, com limiares em \num{0,70} e \num{0,40}
+  (Seção~\ref{sec:confianca}).\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pacote \cd{src/rag}}
+
+\subsection{\arq{chunking.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Extrair texto de PDF e produzir \textit{chunks} com metadados de
+  rastreio.\\
+\zebra Interface pública & \cd{Chunk} (texto, doc, título, seção, página);
+  \cd{chunk\_pdf(pdf\_bytes, doc\_name, title, transcribe=None)}.\\
+Constantes & \cd{CHUNK\_SIZE=1200}; \cd{CHUNK\_OVERLAP=150}; expressão regular
+  de título de seção.\\
+\zebra Estrutura & Duas fontes de blocos: extração direta e transcrição por OCR.
+  Uma função interna consome qualquer uma das duas, o que mantém a lógica de
+  \textit{chunking} e de rastreio de seção idêntica nos dois caminhos.\\
+Detalhe & O parâmetro \cd{transcribe} é uma função injetada, não uma dependência
+  importada. Isso mantém o módulo testável sem cliente de linguagem e sem
+  conhecer o provedor.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{store.py} --- onde vive o \textit{guardrail}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Acesso à base vetorial e \textbf{fonte de verdade da cobertura
+  documental}.\\
+\zebra Interface pública & \cd{COLLECTION};
+  \cd{get\_collection()}; \cd{add\_document(...) -> int};
+  \cd{is\_documented(family) -> bool};
+  \cd{documented\_families() -> set[str]};
+  \cd{retrieve(query, family, llm, top\_k) -> list[dict]}.\\
+Invariante do \textit{guardrail} & \cd{is\_documented} é uma consulta ao índice
+  com filtro por família e limite 1. Não há inferência, não há
+  \textit{cache} e não há configuração intermediária: o estado do índice
+  \emph{é} a resposta.\\
+\zebra Idempotência & \cd{add\_document} remove os \textit{chunks} do mesmo
+  arquivo antes de indexar. Recadastrar um procedimento corrigido não duplica
+  conteúdo nem deixa trechos órfãos concorrendo na busca.\\
+Identificador de \textit{chunk} & Chave composta
+  \cd{\{arquivo\}::\{família\}::\{índice\}} --- determinística, o que torna a
+  reindexação previsível.\\
+\zebra Filtro na consulta & \cd{retrieve} aplica o filtro por família
+  \emph{dentro} da consulta ao índice, não como pós-filtragem. Isso preserva o
+  número de resultados relevantes para um mesmo \textit{top-k}.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{service.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Orquestrar o \textit{guardrail}, a recuperação, a geração e as
+  citações.\\
+\zebra Interface pública & \cd{UNDOCUMENTED\_MSG} (modelo da mensagem);
+  \cd{prescribe(family, event, llm) -> (Prescription | None, str | None)};
+  \cd{chat(message, family, history, llm) -> ChatResponse}.\\
+Contrato de retorno & \cd{prescribe} devolve exatamente um dos dois:
+  prescrição \emph{ou} sugestão. O tipo de retorno torna o caso não documentado
+  explícito na assinatura, em vez de escondido em um campo nulo.\\
+\zebra Citações & A função interna de citações deduplica por
+  (documento, seção, página) preservando a ordem de relevância da recuperação, e
+  lê \emph{apenas} os metadados.\\
+Conversa sem contexto & Quando não há família de referência, a busca percorre
+  todas as famílias documentadas com \textit{top-k} reduzido e mantém os seis
+  trechos globalmente mais próximos. Custa mais chamadas de
+  \textit{embedding}, mas evita exigir que o usuário informe a família antes de
+  poder perguntar.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{bootstrap.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Indexar a base documental automaticamente em ambiente novo.\\
+\zebra Interface pública & \cd{COVERAGE\_PATH};
+  \cd{ingest\_initial\_documents(docs\_dir, llm=None) -> dict[str, int]};
+  \cd{bootstrap\_if\_empty()}.\\
+Três guardas & (i) habilitação por configuração; (ii) índice já povoado
+  dispensa; (iii) índice não inspecionável cancela com advertência. Só depois a
+  \textit{thread} é iniciada.\\
+\zebra Decisão & A \textit{thread} é do tipo \textit{daemon} e a indexação
+  ocorre fora do caminho de \textit{startup}. Bloquear o \textit{startup} faria
+  o orquestrador reprovar a instância antes de a indexação terminar --- em laço
+  infinito (\req{AT-10}).\\
+Tratamento de erro & O corpo da \textit{thread} captura qualquer exceção e a
+  registra com \textit{traceback}, orientando o uso do \textit{endpoint} de
+  cadastro. Uma \textit{thread} que morre em silêncio produziria um sistema que
+  afirma não ter documento algum, sem explicação.\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pacote \cd{src/llm}}
+
+\subsection{\arq{client.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Interface fina e substituível sobre o serviço de linguagem.\\
+\zebra Interface pública & \cd{LLMClient} (protocolo com \cd{generate},
+  \cd{embed} e \cd{transcribe}); \cd{GeminiClient} (implementação);
+  \cd{get\_llm\_client()} memorizado.\\
+Decisão central & O contrato é um \textbf{protocolo estrutural}, não uma classe
+  base. O \textit{fake} de teste não importa nada deste módulo --- basta
+  implementar os três métodos. É o que permite à suíte rodar sem a biblioteca de
+  nuvem instalada.\\
+\zebra \textit{Imports} adiados & As bibliotecas de nuvem são importadas
+  \emph{dentro} dos métodos. Importar o módulo não exige que elas estejam
+  presentes.\\
+Validação de \textit{embeddings} & O laço envia um texto por requisição
+  --- o serviço aceita lista mas devolve silenciosamente um único vetor --- e
+  valida a contagem final, levantando exceção em caso de divergência.\\
+\zebra Temperaturas & \num{0,2} na geração; \num{0,0} na transcrição por OCR,
+  onde qualquer criatividade é defeito.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{prompts.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Centralizar as instruções de sistema e a montagem de
+  \textit{prompt}.\\
+\zebra Interface pública & \cd{SYSTEM\_PRESCRIPTIVE};
+  \cd{SYSTEM\_AGENT}; \cd{build\_context\_block(chunks)};
+  \cd{build\_prescription\_prompt(...)}; \cd{build\_chat\_prompt(...)}.\\
+Duas instruções distintas & A instrução do agente é mais longa porque precisa
+  reger o \emph{uso de ferramentas}: proíbe responder de memória, torna a busca
+  documental obrigatória antes de qualquer procedimento e enumera as famílias
+  canônicas válidas, para que o modelo traduza o vocabulário do usuário
+  (\enquote{rotor inclinado}) no identificador canônico.\\
+\zebra Bloco de contexto & Numera os trechos e prefixa cada um com sua origem
+  legível. A numeração é o que torna a citação por marcador verificável ---
+  o marcador aponta para um trecho concreto no \textit{prompt}.\\
+Histórico limitado & O \textit{prompt} de conversa inclui no máximo as seis
+  mensagens mais recentes, limitando o crescimento do contexto no caminho de
+  degradação.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{agent.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Agente de conversa com ferramentas e memória de sessão
+  persistente.\\
+\zebra Interface pública & \cd{MaintenanceAgent};
+  \cd{MaintenanceAgent.ask(message, session\_id, user\_id) -> ChatResponse};
+  \cd{get\_agent() -> MaintenanceAgent | None}.\\
+Isolamento de esquema & O \textit{framework} de agentes cria uma tabela chamada
+  \cd{events}, que colidiria com a do domínio. A engine de sessões é criada com
+  o caminho de busca fixado no esquema \cd{adk}, criado na inicialização.\\
+\zebra Conversão de driver & As sessões exigem driver assíncrono; a URL é
+  convertida em tempo de inicialização, cobrindo também o caso de SQLite.\\
+Degradação em três casos & Biblioteca ausente, projeto não configurado ou
+  credencial inválida: em todos, \cd{get\_agent()} devolve nulo, registra
+  advertência e o \textit{endpoint} recorre ao RAG de um passo.
+  O \textit{singleton} usa um valor sentinela distinto de nulo para diferenciar
+  \enquote{ainda não tentado} de \enquote{tentado e indisponível} --- sem isso,
+  cada requisição repetiria a inicialização falha.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{agent\_tools.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & As quatro ferramentas do agente e o coletor de citações.\\
+\zebra Interface pública & \cd{AGENT\_TOOLS};
+  \cd{consultar\_historico}; \cd{buscar\_documentos};
+  \cd{diagnosticar\_evento}; \cd{cobertura\_documental};
+  \cd{reset\_citations()}; \cd{get\_citations()}.\\
+\textit{Docstrings} como contrato & As \textit{docstrings} em português são a
+  descrição apresentada ao modelo. Elas não são comentário: são
+  \textbf{especificação de comportamento} --- por isso declaram explicitamente
+  que a busca documental é obrigatória antes de descrever procedimento.\\
+\zebra Coletor por contexto & Uma variável de contexto acumula os metadados dos
+  trechos recuperados, deduplicando por (documento, seção, página). É isolada por
+  tarefa assíncrona, de modo que conversas simultâneas não misturam citações.\\
+Erros como dados & Família inexistente devolve um dicionário com a lista de
+  famílias válidas, em vez de exceção. Isso permite ao modelo se autocorrigir na
+  iteração seguinte, o que uma exceção impediria.\\
+\zebra Janela temporal ancorada & A consulta ao histórico ancora a janela no
+  evento \emph{mais recente do banco}, não na data corrente --- caso contrário,
+  um conjunto de dados histórico devolveria sempre zero ocorrências.\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pacote \cd{src/api}}
+
+\subsection{\arq{main.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Definir os roteadores REST e o ciclo de vida da aplicação.\\
+\zebra Ciclo de vida & O gerenciador de contexto de inicialização dispara a
+  indexação automática condicional e devolve o controle imediatamente.\\
+Funções & \cd{health}; \cd{diagnose}; \cd{\_persist\_diagnosis};
+  \cd{chat}; \cd{stats}; \cd{analytics\_severity};
+  \cd{analytics\_signatures}; \cd{analytics\_model\_quality};
+  \cd{events}; \cd{list\_documents}; \cd{upload\_document}.\\
+\zebra Auditoria em \textit{best-effort} & \cd{\_persist\_diagnosis} captura
+  qualquer exceção, reverte a transação e retorna. A resposta ao cliente
+  \textbf{não} depende da gravação --- um problema de banco não deve impedir o
+  técnico de receber o diagnóstico.\\
+Mensagem de erro acionável & A indisponibilidade do serviço de linguagem
+  devolve \cd{503} informando quais variáveis configurar e qual comando de
+  autenticação executar, além do tipo da exceção original. Mensagem de erro é
+  interface com o operador.\\
+\zebra Validação no cadastro & Famílias inválidas produzem \cd{422} com a lista
+  das válidas; a indexação vetorial ocorre \emph{antes} do registro relacional,
+  porque é ela que determina a cobertura.\\
+\bottomrule
+\end{tabularx}
+
+\subsection{\arq{deps.py} e \arq{analytics.py}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Módulo} & \thd{Conteúdo e observações}\\
+\midrule
+\arq{deps.py} & Três dependências injetáveis: sessão de banco (com fechamento
+  garantido), cliente de linguagem e agente de conversa. São o ponto de
+  substituição usado pelos testes --- por isso o módulo é minúsculo e sem
+  lógica.\\
+\zebra \arq{analytics.py} & Funções puras que recebem uma engine e devolvem
+  dicionários: \cd{severity\_by\_rpm}, \cd{fault\_signatures},
+  \cd{leakage\_evidence}, \cd{model\_quality}. \textbf{Proteção de segurança:}
+  \cd{\_safe\_columns} valida os nomes de coluna contra a constante de
+  \textit{features} antes de qualquer interpolação em SQL; coluna fora da lista
+  levanta exceção. O módulo documenta explicitamente sua dependência de dialeto
+  --- percentis e variâncias amostrais não existem em SQLite.\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pacote \cd{src/ingestion}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Aspecto} & \thd{Descrição}\\
+\midrule
+Propósito & Consumir telemetria MQTT, validar, persistir, diagnosticar e
+  alertar.\\
+\zebra Interface pública & \cd{IngestionWorker};
+  \cd{IngestionWorker.run()}. Executável como módulo.\\
+Métodos & \cd{\_on\_connect}, \cd{\_on\_message}, \cd{\_persist},
+  \cd{\_diagnose\_and\_alert}, \cd{\_to\_dlq},
+  \cd{\_machine\_from\_topic}.\\
+\zebra Idempotência & \cd{\_persist} usa fusão pela chave primária. É a
+  contrapartida obrigatória de QoS 1.\\
+Ordem deliberada & Persistir precede diagnosticar. Se a API estiver
+  indisponível, o evento já está no histórico --- perder o diagnóstico é
+  recuperável, perder o dado não é.\\
+\zebra Truncamento na rejeição & Motivo limitado a \num{2000} caracteres e
+  \textit{payload} a \num{5000}. Um \textit{payload} malformado gigantesco não
+  deve derrubar o \textit{broker} nem o assinante da fila de rejeição.\\
+Autenticação condicional & Credenciais são configuradas apenas quando
+  presentes, o que mantém o desenvolvimento local anônimo e a produção
+  autenticada com o mesmo código.\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pacote \cd{src/ui}}
+
+\begin{tabularx}{\linewidth}{@{}L{30mm}X@{}}
+\toprule
+\headrow \thd{Módulo} & \thd{Conteúdo e observações}\\
+\midrule
+\arq{app.py} & Navegação lateral e as três seções não analíticas.
+  \cd{render\_sidebar} devolve seção e subpainel; apenas a seção ativa é
+  renderizada. O evento de exemplo do enunciado está embutido como constante,
+  para demonstração em um clique. O caminho do logotipo é resolvido de forma
+  absoluta, para que a aplicação possa ser iniciada de qualquer diretório.\\
+\zebra \arq{dashboard.py} & O maior módulo do projeto (730 linhas): os quatro
+  painéis analíticos, a matriz de priorização, as bandas normativas
+  selecionáveis, o gráfico de validação física, o mapa de assinaturas e os
+  painéis de qualidade do modelo e de vazamento. Cada painel busca apenas os
+  dados de que precisa.\\
+\arq{theme.py} & Paleta validada e \textit{chrome} comum dos gráficos. As
+  \textit{docstrings} registram as decisões cromáticas \emph{e o erro evitado}:
+  a codificação verde/vermelho reprovada na separação para deuteranopia. Contém
+  a rampa ordinal por regime de rotação e a escala divergente para escores
+  padronizados.\\
+\zebra \arq{api\_client.py} & Cliente HTTP com \textit{cache} de curta duração e
+  invalidação explícita após cadastro de documento --- sem isso, a interface
+  continuaria exibindo a cobertura anterior por um minuto.\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{\textit{Scripts} de operação}
+
+\begin{tabularx}{\linewidth}{@{}L{34mm}X@{}}
+\toprule
+\headrow \thd{\textit{Script}} & \thd{Função e observações}\\
+\midrule
+\arq{ingest\_data.py} & Carga do histórico. Audita \SI{100}{\percent} dos
+  rótulos antes de gravar; imprime o resumo da carga. Parâmetro:
+  \cd{--csv}.\\
+\zebra \arq{ingest\_docs.py} & Indexação da base documental inicial a partir da
+  declaração de cobertura. Imprime a contagem de \textit{chunks} por documento e
+  as famílias resultantes. Parâmetro: \cd{--docs-dir}.\\
+\arq{simulate\_sensor.py} & Simulador de \textit{gateway}: republica eventos
+  \emph{reais} do conjunto de dados. Parâmetros: \cd{--machine},
+  \cd{--rate}, \cd{--limit}, \cd{--family} e \cd{--invalid} (para demonstrar a
+  fila de rejeição).\\
+\bottomrule
+\end{tabularx}
+
+% ===========================================================================
+\section{Pontos de extensão}
+
+\begin{table}[H]
+\caption{Como estender o sistema}
+\label{tab:extensao}
+\begin{tabularx}{\linewidth}{@{}L{42mm}X@{}}
+\toprule
+\headrow \thd{Objetivo} & \thd{Onde alterar}\\
+\midrule
+Acrescentar família de falha & Declarar a família e sua regra em
+  \arq{src/etl/label\_map.yaml}, recarregar o histórico e retreinar. Nenhuma
+  alteração de código.\\
+\zebra Cobrir uma família com documento & Nenhuma alteração: cadastrar o PDF pela
+  interface ou pela API. Para carga inicial, declarar em
+  \arq{src/rag/coverage.yaml}.\\
+Trocar o provedor de linguagem & Implementar os três métodos do protocolo em um
+  novo cliente e alterar a fábrica em \arq{src/llm/client.py}. Nenhum outro
+  módulo muda.\\
+\zebra Acrescentar \textit{feature} derivada & Editar
+  \arq{src/ml/features.py} (duas listas e uma função) e retreinar. Treino e
+  inferência acompanham automaticamente.\\
+Acrescentar ferramenta ao agente & Escrever a função com \textit{docstring}
+  descritiva em \arq{src/llm/agent\_tools.py} e incluí-la na lista de
+  ferramentas.\\
+\zebra Acrescentar agregação analítica & Escrever a função pura em
+  \arq{src/api/analytics.py} (usando a lista branca de colunas), expor a rota em
+  \arq{src/api/main.py} e consumir em \arq{src/ui/dashboard.py}.\\
+Suportar múltiplos equipamentos & Acrescentar \cd{machine\_id} a
+  \cd{events} e ao esquema de evento; o identificador já é extraído do tópico
+  MQTT pelo \textit{worker}.\\
+\zebra Trocar o \textit{broker} ou o protocolo de campo & Substituir
+  \arq{src/ingestion/mqtt\_worker.py}. Ele consome os mesmos esquemas e a mesma
+  API, portanto nenhuma outra parte do sistema é afetada.\\
+\bottomrule
+\end{tabularx}
+\end{table}

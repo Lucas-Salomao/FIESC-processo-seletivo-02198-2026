@@ -1,0 +1,110 @@
+% ===========================================================================
+%  18 — Conclusao
+% ===========================================================================
+\chapter{Conclusão}
+\label{cap:conclusao}
+
+\section{Síntese da solução}
+
+O sistema documentado nestas páginas transforma um evento de sensores de
+vibração em três respostas acionáveis --- o tipo de defeito, o histórico de
+ocorrências semelhantes e o procedimento de correção fundamentado na base
+documental da planta --- e sabe, com certeza verificável, quando \emph{não} tem
+procedimento a oferecer.
+
+A arquitetura repousa sobre uma fronteira única e explícita: tudo que constitui
+garantia é determinístico e testável; o modelo generativo atua apenas na redação
+de um texto cujo conteúdo ele não escolheu e não pode ampliar.
+
+\begin{table}[H]
+\caption{Aderência ao enunciado}
+\label{tab:aderencia}
+\begin{tabularx}{\linewidth}{@{}L{50mm}L{14mm}X@{}}
+\toprule
+\headrow \thd{Exigência do enunciado} & \thd{Estado} & \thd{Como é atendida}\\
+\midrule
+Identificar o tipo de defeito a partir de um evento JSON & \yes{} Atendido &
+  Classificador \textit{gradient boosting} sobre 23 \textit{features}, com
+  probabilidade e gate de confiança cruzando duas evidências
+  independentes.\\
+\zebra Quantificar ocorrências históricas semelhantes & \yes{} Atendido &
+  Busca de vizinhos sobre o histórico completo (\num{166796} eventos), com
+  contagem, período, frequência diária, série mensal e identificadores
+  rastreáveis.\\
+Gerar instruções de correção a partir da base documental & \yes{} Atendido &
+  Recuperação aumentada com contexto fechado e citação de documento, seção e
+  página derivada dos metadados do \textit{retrieval}.\\
+\zebra Restringir-se a falhas documentadas; caso contrário, avisar e sugerir
+  registro & \yes{} Atendido &
+  \textit{Guardrail} determinístico anterior à chamada do modelo. Verificado por
+  teste que assegura \textbf{zero} chamadas ao modelo para família sem
+  documento.\\
+Executar na estação de trabalho especificada & \yes{} Atendido &
+  \SI{74}{\mebi\byte} de artefatos, base vetorial embarcada e nenhuma inferência
+  local de modelo de linguagem.\\
+\zebra Python como linguagem principal & \yes{} Atendido &
+  Solução integral em Python 3.12 --- API, interface, \textit{worker} e
+  \textit{scripts}.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Contribuições além do exigido}
+
+\begin{tabularx}{\linewidth}{@{}L{44mm}X@{}}
+\toprule
+\headrow \thd{Contribuição} & \thd{Por que agrega valor}\\
+\midrule
+Integração industrial completa por MQTT & Fecha o ciclo sensor $\rightarrow$
+  diagnóstico $\rightarrow$ alerta $\rightarrow$ planta, com garantias de
+  entrega, idempotência e fila de rejeição. É como um supervisório real
+  consumiria a solução.\\
+\zebra Agente com ferramentas na conversa & Permite perguntas exploratórias sobre
+  histórico e procedimentos, com memória de sessão --- mantendo o caminho
+  crítico determinístico.\\
+Diagnóstico honesto do vazamento de dados & A investigação identificou o
+  mecanismo, testou a hipótese, \textbf{registrou sua refutação parcial} e
+  propôs a correção correta --- que é de coleta, não de modelagem.\\
+\zebra Análise exploratória que mudou o produto & Três achados alteraram
+  decisões concretas: a severidade agregada é enganosa, a curtose não discrimina
+  neste conjunto de dados, e a validação física confirma a lei do
+  desbalanceamento.\\
+Acessibilidade cromática validada & A codificação intuitiva verde/vermelho foi
+  reprovada em teste de separação para deuteranopia e substituída. O registro do
+  erro evitado está no código.\\
+\zebra Infraestrutura como código & Topologia versionada e revisável, com
+  segredos declarados por nome e nunca por valor.\\
+Indexação documental automática & Uma implantação nova fica funcional sem passo
+  manual --- inclusive com OCR do documento escaneado.\\
+\bottomrule
+\end{tabularx}
+
+\section{O que este documento afirma e o que não afirma}
+
+\begin{destaque}
+\textbf{Afirma}, com verificação: que o sistema nunca prescreve procedimento
+para falha sem documento; que as citações apontam para trechos reais; que os
+números históricos vêm de consulta ao banco; que a ingestão não perde nem
+duplica evento; e que a suíte de 63 testes roda sem rede.
+
+\textbf{Não afirma}: que o classificador reconhece falhas confiavelmente em uma
+campanha de coleta nova --- o F1 macro de \num{0,195} no protocolo honesto diz o
+contrário, e a causa está diagnosticada na Seção~\ref{sec:vazamento}. Também não
+afirma que a bancada representa uma planta industrial real, nem que a prescrição
+gerada substitui o julgamento do técnico.
+\end{destaque}
+
+\section{Consideração final}
+
+O maior risco de um sistema de manutenção prescritiva não é errar o diagnóstico
+--- é errar com aparência de certeza. Um painel que anunciasse
+\SI{89}{\percent} de acurácia e um assistente que redigisse procedimentos
+plausíveis para falhas sem documentação produziriam uma ferramenta convincente e
+inútil, cuja credibilidade se perderia na primeira intervenção equivocada.
+
+As decisões estruturais deste projeto foram tomadas contra esse risco: o
+\textit{guardrail} determinístico, a citação derivada de metadados, o gate de
+confiança duplo, os três protocolos de avaliação expostos no painel e o registro
+explícito das limitações. O resultado é um sistema que responde o que sabe,
+declara o que não sabe e mostra, em cada caso, de onde veio a resposta ---
+o que é a condição para que um técnico possa confiar nele.

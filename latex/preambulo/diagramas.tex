@@ -1,0 +1,403 @@
+% ============================================================================
+%  diagramas.tex — biblioteca TikZ do documento
+%
+%  Todos os diagramas do documento (C4, UML de casos de uso, atividades,
+%  sequencia, entidade-relacionamento, classes e infraestrutura) sao vetoriais
+%  e desenhados nativamente em TikZ. Isso garante tipografia unica (Roboto),
+%  nitidez em qualquer zoom e ausencia de dependencia externa de renderizacao.
+%  O codigo Mermaid equivalente de cada diagrama esta no Apendice A.
+% ============================================================================
+
+\usepackage{tikz}
+\usetikzlibrary{
+  arrows.meta, positioning, fit, backgrounds, calc, shapes.geometric,
+  shapes.symbols, shapes.multipart, shapes.misc, decorations.pathreplacing,
+  decorations.pathmorphing, decorations.markings, patterns, patterns.meta,
+  matrix, chains, scopes, quotes, shadows.blur, math, intersections
+}
+
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{groupplots}
+
+% Numeracao dos graficos na convencao brasileira (virgula decimal), coerente
+% com o restante do documento.
+\pgfkeys{/pgf/number format/.cd, use comma, 1000 sep={.}}
+
+% Estilo comum dos graficos quantitativos: eixos recessivos, grade sutil,
+% tipografia do documento. Mesma paleta validada da interface.
+\pgfplotsset{
+  pmxplot/.style={
+    width=\linewidth, height=6cm,
+    axis line style={draw=pmxAxis, line width=0.6pt},
+    tick label style={font=\scriptsize\color{pmxInkSoft}},
+    label style={font=\small\color{pmxInkSoft}},
+    title style={font=\small\bfseries\color{pmxBlueDark}, align=left},
+    legend style={font=\scriptsize, draw=pmxGrid, fill=pmxSurface,
+                  /tikz/every even column/.append style={column sep=6pt}},
+    grid=major, grid style={draw=pmxGrid, line width=0.5pt},
+    major tick style={draw=pmxAxis},
+    axis background/.style={fill=pmxSurface},
+    every axis plot post/.append style={line width=0.9pt},
+    enlarge x limits=0.06,
+  }
+}
+
+% ---------------------------------------------------------------------------
+%  Base comum
+% ---------------------------------------------------------------------------
+\tikzset{
+  >={Stealth[length=5.4pt, width=4.2pt]},
+  every node/.append style={align=center, inner sep=4pt},
+  cxlabel/.style={font=\scriptsize\color{pmxInkSoft}, fill=pmxSurface,
+                  inner sep=1.6pt, rounded corners=1pt},
+  cxtitle/.style={font=\small\bfseries\color{pmxBlueDark}},
+  legenda/.style={font=\scriptsize\color{pmxMuted}},
+}
+
+% ---------------------------------------------------------------------------
+%  C4 model — notacao de Simon Brown adaptada a paleta do projeto
+% ---------------------------------------------------------------------------
+\tikzset{
+  % --- elementos -----------------------------------------------------------
+  c4box/.style={
+    rectangle, rounded corners=2.5pt, draw, line width=0.8pt,
+    text width=32mm, minimum height=15mm, font=\footnotesize,
+    inner sep=5pt
+  },
+  c4person/.style={
+    c4box, fill=pmxBlueDark, draw=pmxBlueDark!85!black, text=white,
+    rounded corners=7pt, text width=28mm, minimum height=16mm
+  },
+  c4system/.style={
+    c4box, fill=pmxBlue, draw=pmxBlueDark, text=white
+  },
+  c4systemext/.style={
+    c4box, fill=pmxMuted, draw=pmxInkSoft, text=white
+  },
+  c4container/.style={
+    c4box, fill=pmxBlue!88, draw=pmxBlueDark, text=white
+  },
+  c4containerext/.style={
+    c4box, fill=pmxMuted!85, draw=pmxInkSoft, text=white
+  },
+  c4component/.style={
+    c4box, fill=pmxBlueLight!45, draw=pmxBlue, text=pmxInk, text width=30mm,
+    minimum height=13mm
+  },
+  c4db/.style={
+    cylinder, shape border rotate=90, aspect=0.28, draw, line width=0.8pt,
+    fill=pmxBlueDark, draw=pmxBlueDark!80!black, text=white,
+    text width=25mm, minimum height=17mm, font=\footnotesize, inner sep=3pt
+  },
+  c4queue/.style={
+    c4box, fill=pmxYellow!85, draw=pmxYellow!60!black, text=pmxInk,
+    rounded corners=8pt
+  },
+  c4artifact/.style={
+    c4box, fill=pmxGreen!80, draw=pmxGreen!60!black, text=white
+  },
+  % --- fronteiras ----------------------------------------------------------
+  c4boundary/.style={
+    draw=pmxAxis, dashed, dash pattern=on 3pt off 2.4pt, line width=0.9pt,
+    rounded corners=4pt, inner sep=9pt
+  },
+  c4boundarylbl/.style={
+    font=\scriptsize\bfseries\color{pmxInkSoft}, anchor=north west,
+    inner sep=2pt
+  },
+  c4zone/.style={
+    c4boundary, draw=pmxBlue!55, fill=pmxBlue!4
+  },
+  c4zoneext/.style={
+    c4boundary, draw=pmxMuted, fill=pmxPaper
+  },
+  % --- relacoes ------------------------------------------------------------
+  c4rel/.style={-{Stealth[length=5pt,width=4pt]}, line width=0.85pt,
+                draw=pmxInkSoft},
+  c4relbi/.style={c4rel, {Stealth[length=5pt,width=4pt]}-{Stealth[length=5pt,width=4pt]}},
+  c4reldash/.style={c4rel, dashed, dash pattern=on 3pt off 2pt},
+  c4relhi/.style={c4rel, draw=pmxOrange, line width=1.1pt},
+}
+
+% Rotulo tecnologico dentro de um elemento C4
+\newcommand{\tech}[1]{\\[1.5pt]{\scriptsize\itshape [#1]}}
+% Descricao curta dentro de um elemento C4
+\newcommand{\desc}[1]{\\[2pt]{\scriptsize #1}}
+
+% ---------------------------------------------------------------------------
+%  UML — casos de uso
+% ---------------------------------------------------------------------------
+\tikzset{
+  ucase/.style={
+    ellipse, draw=pmxBlue, line width=0.85pt, fill=pmxBlueWash,
+    text=pmxInk, font=\scriptsize, minimum width=34mm, minimum height=11mm,
+    inner sep=2.5pt, text width=31mm
+  },
+  ucasesec/.style={ucase, fill=pmxSurface, draw=pmxAxis},
+  ucsystem/.style={
+    draw=pmxBlueDark, line width=1pt, rounded corners=3pt, fill=pmxBlue!3,
+    inner sep=11pt
+  },
+  ucrel/.style={line width=0.8pt, draw=pmxInkSoft},
+  ucinclude/.style={
+    -{Stealth[length=5pt,width=4pt]}, dashed, dash pattern=on 3pt off 2pt,
+    line width=0.75pt, draw=pmxGreen
+  },
+  ucextend/.style={
+    -{Stealth[length=5pt,width=4pt]}, dashed, dash pattern=on 3pt off 2pt,
+    line width=0.75pt, draw=pmxOrange
+  },
+  ucgen/.style={-{Triangle[open, length=6pt, width=6pt]}, line width=0.8pt,
+                draw=pmxInkSoft},
+  ucnote/.style={font=\scriptsize\color{pmxInkSoft}},
+}
+
+% Ator UML (boneco de palito) — #1 nome do no, #2 posicao, #3 rotulo
+\newcommand{\ator}[3]{%
+  \begin{scope}[shift={#2}]
+    \draw[line width=0.9pt, draw=pmxBlueDark] (0,0.30) circle (0.155);
+    \draw[line width=0.9pt, draw=pmxBlueDark] (0,0.145) -- (0,-0.24);
+    \draw[line width=0.9pt, draw=pmxBlueDark] (-0.245,-0.01) -- (0.245,-0.01);
+    \draw[line width=0.9pt, draw=pmxBlueDark] (0,-0.24) -- (-0.20,-0.60);
+    \draw[line width=0.9pt, draw=pmxBlueDark] (0,-0.24) -- (0.20,-0.60);
+    \node[font=\scriptsize\bfseries\color{pmxBlueDark}, text width=24mm,
+          anchor=north] at (0,-0.68) {#3};
+    \node[inner sep=0pt, minimum width=13mm, minimum height=19mm] (#1) at (0,-0.15) {};
+  \end{scope}
+}
+
+% Ator secundario (sistema externo) — retangulo com estereotipo
+\newcommand{\atorsys}[3]{%
+  \node[draw=pmxInkSoft, line width=0.85pt, fill=pmxPaper, rounded corners=2pt,
+        font=\scriptsize, text width=22mm, minimum height=12mm] (#1) at #2
+        {{\scriptsize$\ll$ator$\gg$}\\\textbf{#3}};
+}
+
+% ---------------------------------------------------------------------------
+%  UML — diagramas de atividades
+% ---------------------------------------------------------------------------
+\tikzset{
+  actstart/.style={
+    circle, fill=pmxInk, draw=pmxInk, minimum size=4.6mm, inner sep=0pt
+  },
+  actend/.style={
+    circle, fill=pmxInk, draw=pmxInk, minimum size=4.6mm, inner sep=0pt,
+    double, double distance=1.1pt, outer sep=0pt
+  },
+  action/.style={
+    rectangle, rounded corners=4pt, draw=pmxBlue, line width=0.85pt,
+    fill=pmxBlueWash, text=pmxInk, font=\scriptsize, text width=36mm,
+    minimum height=10mm, inner sep=4pt
+  },
+  actionsys/.style={action, fill=pmxSurface, draw=pmxAxis},
+  actionerr/.style={action, fill=pmxOrangeWash, draw=pmxOrange},
+  actionok/.style={action, fill=pmxGreenWash, draw=pmxGreen},
+  decision/.style={
+    diamond, draw=pmxBlueDark, line width=0.85pt, fill=pmxYellowWash,
+    aspect=1.9, font=\scriptsize, text width=26mm, inner sep=1pt
+  },
+  bar/.style={
+    rectangle, fill=pmxInk, minimum width=34mm, minimum height=1.5mm,
+    inner sep=0pt
+  },
+  barv/.style={
+    rectangle, fill=pmxInk, minimum width=1.5mm, minimum height=30mm,
+    inner sep=0pt
+  },
+  flow/.style={-{Stealth[length=5pt,width=4pt]}, line width=0.85pt,
+               draw=pmxInkSoft},
+  flowlbl/.style={font=\scriptsize\color{pmxInkSoft}, fill=pmxSurface,
+                  inner sep=1.5pt},
+  lane/.style={
+    draw=pmxAxis, line width=0.7pt, fill=pmxSurface
+  },
+  lanehdr/.style={
+    draw=pmxAxis, line width=0.7pt, fill=pmxBlueDark, text=white,
+    font=\scriptsize\bfseries
+  },
+  actnote/.style={
+    draw=pmxYellow!70!black, fill=pmxYellowWash, line width=0.6pt,
+    font=\scriptsize\color{pmxInkSoft}, text width=34mm, align=left,
+    rounded corners=0pt, inner sep=4pt
+  },
+  actnoteline/.style={dashed, dash pattern=on 2pt off 1.6pt, draw=pmxYellow!70!black},
+  objflow/.style={
+    rectangle, draw=pmxGreen, line width=0.7pt, fill=pmxGreenWash,
+    font=\scriptsize, text width=30mm, inner sep=3.5pt
+  },
+}
+
+% ---------------------------------------------------------------------------
+%  UML — diagramas de sequencia
+% ---------------------------------------------------------------------------
+\tikzset{
+  seqhead/.style={
+    rectangle, rounded corners=2pt, draw=pmxBlueDark, line width=0.8pt,
+    fill=pmxBlueDark, text=white, font=\scriptsize, text width=26mm,
+    minimum height=9mm, inner sep=3pt
+  },
+  seqheadext/.style={seqhead, fill=pmxMuted, draw=pmxInkSoft},
+  seqheadact/.style={seqhead, fill=pmxBlue, draw=pmxBlueDark},
+  seqline/.style={dashed, dash pattern=on 2.6pt off 2.2pt, draw=pmxAxis,
+                  line width=0.7pt},
+  seqmsg/.style={-{Stealth[length=5pt,width=4pt]}, line width=0.85pt,
+                 draw=pmxInkSoft},
+  seqret/.style={seqmsg, dashed, dash pattern=on 2.6pt off 2pt,
+                 draw=pmxInkSoft},
+  seqself/.style={seqmsg, rounded corners=2pt},
+  seqlbl/.style={font=\scriptsize\color{pmxInk}, fill=pmxSurface,
+                 inner sep=1.6pt},
+  seqact/.style={fill=pmxBlueLight!60, draw=pmxBlue, line width=0.5pt,
+                 minimum width=2.2mm, inner sep=0pt},
+  seqframe/.style={draw=pmxAxis, line width=0.7pt, rounded corners=0pt},
+  seqframelbl/.style={fill=pmxBlueDark, text=white, font=\scriptsize\bfseries,
+                      inner sep=2.2pt, anchor=north west},
+  seqcond/.style={font=\scriptsize\itshape\color{pmxInkSoft}, anchor=west},
+}
+
+% Raia de sequencia: #1 = x, #2 = profundidade (y final, negativo),
+% #3 = titulo, #4 = tecnologia
+\newcommand{\raia}[4]{%
+  \node[seqhead] at (#1,0) {\textbf{#3}\\[0.5pt]{\scriptsize\itshape #4}};
+  \draw[seqline] (#1,-0.52) -- (#1,#2);
+}
+\newcommand{\raiaext}[4]{%
+  \node[seqheadext] at (#1,0) {\textbf{#3}\\[0.5pt]{\scriptsize\itshape #4}};
+  \draw[seqline] (#1,-0.52) -- (#1,#2);
+}
+% Mensagem: #1 = x origem, #2 = x destino, #3 = y, #4 = rotulo
+\newcommand{\msgs}[4]{%
+  \draw[seqmsg] (#1,#3) -- (#2,#3) node[seqlbl, midway, above=0.4pt]{#4};
+}
+% Retorno (tracejado)
+\newcommand{\msgr}[4]{%
+  \draw[seqret] (#1,#3) -- (#2,#3) node[seqlbl, midway, above=0.4pt]{#4};
+}
+% Auto-mensagem: #1 = x, #2 = y, #3 = rotulo
+\newcommand{\msgself}[3]{%
+  \draw[seqself] (#1,#2) -- ++(0.62,0) -- ++(0,-0.42) -- ++(-0.62,0);
+  \node[seqlbl, anchor=west] at (#1+0.72,#2-0.21) {#3};
+}
+
+% ---------------------------------------------------------------------------
+%  Entidade-relacionamento e classes
+% ---------------------------------------------------------------------------
+\tikzset{
+  entidade/.style={
+    rectangle split, rectangle split parts=2, draw=pmxBlueDark,
+    line width=0.85pt, rectangle split part fill={pmxBlueDark, pmxSurface},
+    font=\scriptsize, text width=37mm, inner sep=4pt, rounded corners=1pt,
+    every text node part/.style={align=center},
+    every two node part/.style={align=left}
+  },
+  classe/.style={
+    rectangle split, rectangle split parts=3, draw=pmxBlueDark,
+    line width=0.85pt, rectangle split part fill={pmxBlueDark, pmxSurface, pmxPaper},
+    font=\scriptsize, text width=44mm, inner sep=4pt, rounded corners=1pt,
+    every text node part/.style={align=center},
+    every two node part/.style={align=left},
+    every three node part/.style={align=left}
+  },
+  erel/.style={line width=0.85pt, draw=pmxInkSoft},
+  ercard/.style={font=\scriptsize\color{pmxBlueDark}, fill=pmxSurface,
+                 inner sep=1.4pt},
+  hered/.style={-{Triangle[open, length=6.5pt, width=6.5pt]}, line width=0.85pt,
+                draw=pmxInkSoft},
+  compos/.style={-{Diamond[open, length=6pt, width=4.5pt]}, line width=0.85pt,
+                 draw=pmxInkSoft},
+  depend/.style={-{Stealth[length=5pt,width=4pt]}, dashed,
+                 dash pattern=on 3pt off 2pt, line width=0.75pt,
+                 draw=pmxInkSoft},
+}
+
+% Titulo branco em negrito para a primeira particao de entidade/classe
+\newcommand{\etitulo}[1]{\textcolor{white}{\textbf{#1}}}
+\newcommand{\pk}[1]{\textcolor{pmxBlueDark}{\textbf{#1}}}
+\newcommand{\fk}[1]{\textcolor{pmxOrange}{#1}}
+
+% ---------------------------------------------------------------------------
+%  Infraestrutura / implantacao
+% ---------------------------------------------------------------------------
+\tikzset{
+  nuvem/.style={
+    draw=pmxBlue, line width=1pt, dash pattern=on 4pt off 2.6pt,
+    rounded corners=6pt, fill=pmxBlue!3, inner sep=11pt
+  },
+  nuvemlbl/.style={
+    font=\scriptsize\bfseries\color{pmxBlueDark}, anchor=north west,
+    fill=pmxSurface, inner sep=2.4pt
+  },
+  regiao/.style={
+    draw=pmxAxis, line width=0.8pt, dash pattern=on 2.6pt off 2pt,
+    rounded corners=4pt, fill=pmxSurface, inner sep=8pt
+  },
+  servico/.style={
+    rectangle, rounded corners=2.5pt, draw=pmxBlueDark, line width=0.85pt,
+    fill=pmxBlue!88, text=white, font=\scriptsize, text width=30mm,
+    minimum height=13mm, inner sep=4pt
+  },
+  servicoger/.style={servico, fill=pmxBlueDark},
+  servicobroker/.style={servico, fill=pmxYellow!85, text=pmxInk,
+                        draw=pmxYellow!55!black},
+  volume/.style={
+    cylinder, shape border rotate=90, aspect=0.30, draw=pmxGreen!60!black,
+    line width=0.85pt, fill=pmxGreen!80, text=white, font=\scriptsize,
+    text width=22mm, minimum height=15mm, inner sep=3pt
+  },
+  externo/.style={
+    rectangle, rounded corners=2.5pt, draw=pmxInkSoft, line width=0.85pt,
+    fill=pmxMuted, text=white, font=\scriptsize, text width=30mm,
+    minimum height=13mm, inner sep=4pt
+  },
+  internet/.style={
+    cloud, cloud puffs=13, cloud puff arc=110, draw=pmxAxis, line width=0.85pt,
+    fill=pmxPaper, text=pmxInkSoft, font=\scriptsize, minimum width=26mm,
+    minimum height=15mm, aspect=1.6
+  },
+  netpriv/.style={-{Stealth[length=5pt,width=4pt]}, line width=0.9pt,
+                  draw=pmxGreen!70!black},
+  netpub/.style={-{Stealth[length=5pt,width=4pt]}, line width=0.9pt,
+                 draw=pmxOrange},
+  netbi/.style={{Stealth[length=5pt,width=4pt]}-{Stealth[length=5pt,width=4pt]},
+                line width=0.9pt, draw=pmxInkSoft},
+  portlbl/.style={font=\scriptsize\ttfamily\color{pmxInkSoft},
+                  fill=pmxSurface, inner sep=1.5pt},
+}
+
+% ---------------------------------------------------------------------------
+%  Pipeline / fluxo de dados
+% ---------------------------------------------------------------------------
+\tikzset{
+  etapa/.style={
+    rectangle, rounded corners=2.5pt, draw=pmxBlue, line width=0.85pt,
+    fill=pmxBlueWash, font=\scriptsize, text width=27mm, minimum height=13mm,
+    inner sep=4pt
+  },
+  etapaio/.style={
+    etapa, fill=pmxPaper, draw=pmxAxis
+  },
+  etapaout/.style={etapa, fill=pmxGreenWash, draw=pmxGreen},
+  etapaerr/.style={etapa, fill=pmxOrangeWash, draw=pmxOrange},
+  fita/.style={
+    signal, signal to=east, signal from=west, draw=pmxBlue,
+    line width=0.85pt, fill=pmxBlueWash, font=\scriptsize, text width=24mm,
+    minimum height=12mm
+  },
+  pipe/.style={-{Stealth[length=5.4pt,width=4.4pt]}, line width=1pt,
+               draw=pmxBlue},
+  pipelbl/.style={font=\scriptsize\color{pmxInkSoft}, fill=pmxSurface,
+                  inner sep=1.5pt},
+}
+
+% ---------------------------------------------------------------------------
+%  Legenda padronizada de diagrama
+% ---------------------------------------------------------------------------
+\newcommand{\amostra}[1]{%
+  \tikz[baseline=-0.55ex]{\node[#1, text width=0pt, minimum width=3.6mm,
+    minimum height=3.0mm, inner sep=0pt, font=\tiny]{};}%
+}
+\newenvironment{legendadiag}
+  {\par\vspace{2pt}\begingroup\footnotesize\color{pmxInkSoft}%
+   \setlength{\parskip}{2pt}\textbf{Legenda:}\space}
+  {\endgroup\par\vspace{2pt}}

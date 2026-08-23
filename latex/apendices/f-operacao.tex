@@ -1,0 +1,162 @@
+% ===========================================================================
+%  Apendice F — Operacao
+% ===========================================================================
+\chapter{Guia de operação}
+\label{ap:operacao}
+
+\section{Instalação do zero}
+
+\begin{lstlisting}[language=bash, caption={Instalação e primeira execução completa}, label={lst:setup}]
+# 1. Ambiente Python (requer Python 3.12+)
+python -m venv .venv
+.venv\Scripts\activate            # Windows
+# source .venv/bin/activate       # Linux / macOS
+pip install -e .[dev]
+
+# 2. Configuracao
+copy .env.example .env            # e preencha GOOGLE_CLOUD_PROJECT
+gcloud auth application-default login
+
+# 3. Infraestrutura local (banco + broker)
+docker compose up -d postgres mosquitto
+
+# 4. Carga do historico: 166.796 eventos, 151 rotulos -> 17 familias
+python scripts/ingest_data.py --csv documentos/banner.csv
+
+# 5. Treino do motor de diagnostico (scaler + KNN + LightGBM -> artifacts/)
+python -m src.ml.train
+
+# 6. Base documental: Doc1..Doc6 -> ChromaDB (requer credenciais)
+python scripts/ingest_docs.py --docs-dir documentos
+
+# 7. Servicos
+uvicorn src.api.main:app --port 8000        # API -> http://localhost:8000/docs
+streamlit run src/ui/app.py                 # UI  -> http://localhost:8501
+python -m src.ingestion.mqtt_worker         # worker MQTT (opcional)
+\end{lstlisting}
+
+Alternativa integralmente em contêineres, após os passos 4 a 6:
+\cd{docker compose up --build}.
+
+\section{Operação diária}
+
+\begin{tabularx}{\linewidth}{@{}L{50mm}X@{}}
+\toprule
+\headrow \thd{Objetivo} & \thd{Comando}\\
+\midrule
+Verificar saúde do serviço &
+  \cd{curl -s localhost:8000/api/v1/health | jq}\\
+\zebra Diagnosticar um evento &
+  \cd{curl -X POST localhost:8000/api/v1/diagnose -H 'Content-Type:
+  application/json' -d @evento.json}\\
+Consultar cobertura documental &
+  \cd{curl -s localhost:8000/api/v1/documents | jq
+  '.documented\_families'}\\
+\zebra Cadastrar procedimento &
+  \cd{curl -X POST .../documents -F 'file=@doc.pdf' -F 'title=...' -F
+  'families=...'}\\
+Reindexar a base documental &
+  \cd{python scripts/ingest\_docs.py}\\
+\zebra Retreinar o modelo &
+  \cd{python -m src.ml.train}\\
+Simular telemetria &
+  \cd{python scripts/simulate\_sensor.py --family cocked\_rotor --limit 5
+  --rate 2}\\
+\zebra Demonstrar a fila de rejeição &
+  \cd{python scripts/simulate\_sensor.py --invalid}\\
+Observar as filas de saída &
+  \cd{mosquitto\_sub -h localhost -t 'sensors/+/alerts' -t 'sensors/+/dlq'
+  -v}\\
+\zebra Executar a suíte de testes &
+  \cd{pytest}\\
+Verificar estilo de código &
+  \cd{ruff check src tests scripts}\\
+\bottomrule
+\end{tabularx}
+
+\section{Diagnóstico de problemas}
+
+\begin{tabularx}{\linewidth}{@{}L{44mm}L{40mm}X@{}}
+\toprule
+\headrow \thd{Sintoma} & \thd{Causa provável} & \thd{Ação}\\
+\midrule
+\endhead
+\cd{artifacts\_loaded: false} em \cd{/health} & Treino não executado ou
+  diretório de artefatos incorreto &
+  Executar \cd{python -m src.ml.train} e conferir \cd{ARTIFACTS\_DIR}.\\
+\zebra \cd{documented\_families} vazio & Base documental não indexada, ou
+  indexação inicial em curso &
+  Executar \arq{ingest\_docs.py}; em nuvem, acompanhar o \textit{log} de
+  indexação. Lista vazia no primeiro minuto após implantação é estado
+  esperado.\\
+\cd{503} no \textit{endpoint} de conversa & Credenciais de nuvem ausentes ou
+  expiradas &
+  A própria mensagem indica as variáveis e o comando de autenticação.
+  O diagnóstico continua funcionando sem elas.\\
+\zebra Selo de \enquote{recuperação direta} na conversa & Agente indisponível
+  (biblioteca ausente ou projeto não configurado) &
+  Comportamento previsto (\req{RNF-12}). Conferir o \textit{log} de
+  inicialização, que registra o motivo exato.\\
+Interface exibe \enquote{API indisponível} & API não iniciada ou endereço
+  incorreto &
+  Conferir \cd{API\_URL}; em nuvem deve ser o domínio \emph{privado}, não o
+  público.\\
+\zebra ETL interrompido com rótulo desconhecido & Rótulo novo no conjunto de
+  dados &
+  \textbf{Comportamento desejado.} Acrescentar a regra em
+  \arq{src/etl/label\_map.yaml} e reexecutar --- nunca contornar removendo a
+  linha.\\
+Eventos MQTT não aparecem no painel & \textit{Worker} desconectado, ou tópico
+  divergente &
+  Conferir o \textit{log} do \textit{worker} (registra a conexão e a
+  assinatura) e a variável de tópico.\\
+\zebra Mensagens acumulando na fila de rejeição & \textit{Payload} do
+  \textit{gateway} fora do esquema &
+  Ler o campo de motivo da mensagem: ele nomeia exatamente o campo
+  inconsistente.\\
+Testes de analítica pulados & PostgreSQL indisponível &
+  Comportamento previsto: essas agregações exigem recursos estatísticos ausentes
+  no SQLite. Subir o banco os habilita.\\
+\zebra Índice vetorial perdido após implantação & Volume não montado ou região
+  do volume alterada &
+  Conferir o ponto de montagem e \textbf{jamais} omitir a região na declaração
+  de infraestrutura --- omiti-la é operação destrutiva.\\
+\bottomrule
+\end{tabularx}
+
+\section{Compilação deste documento}
+
+\begin{lstlisting}[language=bash, caption={Compilação do documento LaTeX}, label={lst:buildtex}]
+cd latex
+
+# Opcao 1 — automatica (recomendada)
+latexmk -pdf main.tex
+
+# Opcao 2 — manual, quatro passagens (indices, referencias e bibliografia)
+pdflatex main
+biber    main
+pdflatex main
+pdflatex main
+
+# Opcao 3 — Windows PowerShell
+.\compilar.ps1
+\end{lstlisting}
+
+\begin{tabularx}{\linewidth}{@{}L{40mm}X@{}}
+\toprule
+\headrow \thd{Requisito} & \thd{Observação}\\
+\midrule
+Distribuição \TeX{} & MiKTeX ou \TeX{} Live com \cd{pdflatex} e \cd{biber}.\\
+\zebra Fontes & Pacotes \cd{roboto} e \cd{roboto-mono} (Roboto e Roboto Mono em
+  formato Type1/OTF). O documento compila com \textbf{pdfLaTeX puro} --- não
+  exige XeLaTeX nem LuaLaTeX.\\
+Pacotes principais & \cd{tikz} e \cd{pgfplots} (diagramas e gráficos),
+  \cd{tcolorbox}, \cd{booktabs}, \cd{tabularx}, \cd{ltablex}, \cd{listings},
+  \cd{titlesec}, \cd{biblatex} com estilo \cd{abnt}.\\
+\zebra Bibliografia & Estilo ABNT NBR 6023~\cite{abnt6023} via
+  \cd{biblatex-abnt}, com \cd{biber} como processador.\\
+Diagramas & Todos vetoriais em TikZ; nenhuma dependência de renderização
+  externa. As fontes Mermaid equivalentes estão no
+  Apêndice~\ref{ap:mermaid}.\\
+\bottomrule
+\end{tabularx}

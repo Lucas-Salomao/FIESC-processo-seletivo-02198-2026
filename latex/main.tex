@@ -1,0 +1,101 @@
+% ============================================================================
+%  Sistema de Manutencao Prescritiva para Maquinas Rotativas
+%  Documentacao Tecnica Consolidada — PMX-DOC-001
+%
+%  Compilacao (pdfLaTeX + Biber, tres passagens):
+%     pdflatex  main
+%     biber     main
+%     pdflatex  main
+%     pdflatex  main
+%  Ou simplesmente:  latexmk -pdf main.tex
+%  Ou no Windows:    .\compilar.ps1
+% ============================================================================
+\documentclass[11pt, a4paper, oneside, openany]{report}
+
+\input{preambulo/estilo}
+\input{preambulo/diagramas}
+
+\hypersetup{
+  pdftitle={Sistema de Manutencao Prescritiva para Maquinas Rotativas — Documentacao Tecnica},
+  pdfauthor={Lucas Tadeu Monteiro Guedes Fernandes Salomao},
+  pdfsubject={Arquitetura, escopo, engenharia de aprendizado de maquina, RAG e documentacao de codigo},
+  pdfkeywords={manutencao prescritiva, manutencao preditiva, LightGBM, KNN,
+               RAG, ChromaDB, Vertex AI, FastAPI, MQTT, C4, UML, Industria 4.0},
+  pdfcreator={pdfLaTeX}
+}
+
+\begin{document}
+
+% ---------------------------------------------------------------- pre-textual
+\pagenumbering{roman}
+\input{preambulo/capa}
+
+\cleardoublepage
+\pdfbookmark[0]{Sumário}{toc}
+\renewcommand{\contentsname}{Sumário}
+\tableofcontents
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Lista de figuras}
+\renewcommand{\listfigurename}{Lista de figuras}
+\listoffigures
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Lista de tabelas}
+\renewcommand{\listtablename}{Lista de tabelas}
+\listoftables
+
+\cleardoublepage
+\input{secoes/00-siglas}
+
+% --------------------------------------------------------------------- textual
+\cleardoublepage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\pagestyle{pmxmain}
+
+\input{secoes/01-introducao}
+\input{secoes/02-definicoes}
+\input{secoes/03-escopo}
+\input{secoes/04-casos-de-uso}
+\input{secoes/05-arquitetura}
+\input{secoes/06-modelo-de-dados}
+\input{secoes/07-pipeline-dados}
+\input{secoes/08-machine-learning}
+\input{secoes/09-rag-llm}
+\input{secoes/10-mqtt}
+\input{secoes/11-interface}
+\input{secoes/12-api}
+\input{secoes/13-atividades}
+\input{secoes/14-infraestrutura}
+\input{secoes/15-qualidade}
+\input{secoes/16-codigo}
+\input{secoes/17-riscos-evolucao}
+\input{secoes/18-conclusao}
+
+% ------------------------------------------------------------------- apendices
+\appendix
+\renewcommand{\thechapter}{\Alph{chapter}}
+\titleformat{\chapter}[display]
+  {\normalfont}
+  {\raggedleft\fontsize{58}{58}\selectfont\color{pmxBlueLight}\textbf{Apêndice \thechapter}}
+  {-6pt}
+  {\raggedright\fontsize{23}{27}\selectfont\bfseries\color{pmxBlueDark}}
+  [\vspace{5pt}{\color{pmxBlue}\rule{\linewidth}{2.2pt}}]
+
+\input{apendices/a-mermaid}
+\input{apendices/b-features}
+\input{apendices/c-taxonomia}
+\input{apendices/d-payloads}
+\input{apendices/e-configuracao}
+\input{apendices/f-operacao}
+
+% ---------------------------------------------------------------- referencias
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Referências}
+\printbibliography[title={Referências}]
+
+\end{document}
