@@ -18,6 +18,8 @@ from src.rag.bootstrap import ingest_initial_documents  # noqa: E402
 
 
 def main(docs_dir: Path) -> None:
+    """Indexa os PDFs listados em coverage.yaml e imprime quantos chunks foram
+    gerados para cada arquivo."""
     indexed = ingest_initial_documents(docs_dir)
     for filename, chunks in indexed.items():
         print(f"{filename}: {chunks} chunks indexados")

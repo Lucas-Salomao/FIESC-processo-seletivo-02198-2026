@@ -37,11 +37,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-API = "/api/v1"
+API = "/api/v1"  # prefixo comum de todas as rotas desta API
 
 
 @app.get(f"{API}/health")
 def health() -> dict:
+    """Status do sistema: se os artefatos do modelo de ML foram carregados e
+    quais famílias já têm documento cadastrado. Usado pela UI (bolinha de
+    status na barra lateral) e por healthchecks de infraestrutura."""
     settings = get_settings()
     artifacts_ok = (settings.artifacts_dir / "lgbm.joblib").exists()
     try:
@@ -63,9 +66,16 @@ def diagnose(
     db: Session = Depends(get_db),
     llm: LLMClient = Depends(get_llm),
 ) -> DiagnoseResponse:
+    """Recebe uma leitura de sensor e devolve o diagnóstico completo: família de
+    falha prevista (ou "normal"), probabilidade, ocorrências históricas
+    parecidas e, quando a falha for documentada, as instruções de correção (RAG).
+    """
+    # 1. Roda o motor de diagnóstico (LightGBM + KNN) sobre o evento recebido.
     engine = get_engine_singleton()
     result = engine.diagnose(event)
 
+    # 2. Se for falha, verifica se já existe documento cadastrado para ela e
+    #    busca a prescrição de correção — ou a sugestão de cadastrar um documento.
     prescription, suggestion, documented = None, None, True
     if result.is_fault:
         documented = rag_store.is_documented(result.family)
@@ -83,6 +93,7 @@ def diagnose(
         suggestion=suggestion,
     )
 
+    # 3. Grava o diagnóstico no banco para auditoria (não afeta a resposta se o banco falhar).
     _persist_diagnosis(db, event, response)
     return response
 
@@ -116,6 +127,13 @@ async def chat(
     llm: LLMClient = Depends(get_llm),
     agent=Depends(get_chat_agent),
 ) -> ChatResponse:
+    """Responde a uma pergunta do usuário no chat prescritivo.
+
+    Se o agente ADK (com ferramentas e memória de conversa) estiver
+    disponível, delega a ele; caso contrário, cai no fallback de RAG de um
+    passo (busca nos documentos + geração direta, sem ferramentas nem
+    memória entre mensagens).
+    """
     try:
         if agent is not None:
             return await agent.ask(request.message, session_id=request.session_id)
@@ -135,6 +153,8 @@ async def chat(
 
 @app.get(f"{API}/stats")
 def stats(db: Session = Depends(get_db)) -> dict:
+    """Estatísticas gerais para o painel "Visão geral" do dashboard: quantidade
+    de eventos por família e a série mensal de eventos de falha."""
     per_family = db.execute(
         select(FaultFamily.name, FaultFamily.is_fault, func.count(Event.id))
         .join(Event, Event.family_id == FaultFamily.id)
@@ -191,6 +211,8 @@ def analytics_model_quality(db: Session = Depends(get_db)) -> dict:
 
 @app.get(f"{API}/events")
 def events(limit: int = 50, family: str | None = None, db: Session = Depends(get_db)) -> list[dict]:
+    """Lista os eventos mais recentes, opcionalmente filtrados por família
+    canônica. `limit` é sempre travado em 500 para não sobrecarregar a resposta."""
     query = select(Event).order_by(Event.created_at.desc()).limit(min(limit, 500))
     if family:
         query = query.join(FaultFamily).where(FaultFamily.name == family)
@@ -211,6 +233,7 @@ def events(limit: int = 50, family: str | None = None, db: Session = Depends(get
 
 @app.get(f"{API}/documents")
 def list_documents(db: Session = Depends(get_db)) -> dict:
+    """Lista os documentos orientativos ativos e quais famílias já têm algum documento."""
     docs = db.execute(select(Document).where(Document.status == "active")).scalars().all()
     return {
         "documents": [
@@ -234,6 +257,11 @@ async def upload_document(
     db: Session = Depends(get_db),
     llm: LLMClient = Depends(get_llm),
 ) -> dict:
+    """Recebe um PDF de procedimento, extrai o texto (ou aplica OCR, se for um
+    PDF escaneado), gera os embeddings e indexa no ChromaDB para as famílias
+    informadas — a partir daí elas passam a ser consideradas "documentadas".
+    """
+    # 1. Valida que todas as famílias informadas existem e que veio ao menos uma.
     canonizer = get_canonizer()
     family_list = [f.strip() for f in families.split(",") if f.strip()]
     invalid = [f for f in family_list if f not in canonizer.families]
@@ -245,6 +273,7 @@ async def upload_document(
     if not family_list:
         raise HTTPException(status_code=422, detail="Informe ao menos uma família coberta.")
 
+    # 2. Lê o PDF e delega a extração/chunking/indexação ao módulo rag.store.
     pdf_bytes = await file.read()
     n_chunks = rag_store.add_document(
         pdf_bytes=pdf_bytes,
@@ -256,6 +285,9 @@ async def upload_document(
     if n_chunks == 0:
         raise HTTPException(status_code=422, detail="Nenhum conteúdo extraído do PDF.")
 
+    # 3. Registra o documento e sua cobertura no banco relacional — é apenas um
+    #    registro auxiliar para a listagem (best-effort); o ChromaDB continua
+    #    sendo a fonte de verdade sobre quais famílias estão documentadas.
     try:
         doc = Document(
             filename=file.filename or "documento.pdf",

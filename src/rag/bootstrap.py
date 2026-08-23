@@ -57,7 +57,7 @@ def bootstrap_if_empty() -> None:
     """
     settings = get_settings()
     if not settings.rag_bootstrap:
-        return
+        return  # desligado por padrão (RAG_BOOTSTRAP=false) — só liga em deploy
 
     try:
         if store.documented_families():
@@ -68,6 +68,7 @@ def bootstrap_if_empty() -> None:
         return
 
     def _run() -> None:
+        """Corpo da thread de ingestão — roda em segundo plano, sem bloquear o startup."""
         try:
             log.info("Índice vazio: iniciando ingestão da base documental.")
             indexed = ingest_initial_documents(settings.docs_dir)

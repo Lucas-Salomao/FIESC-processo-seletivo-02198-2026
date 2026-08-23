@@ -164,6 +164,8 @@ def _filter_row(stats: dict, sev_df: pd.DataFrame) -> dict:
 def _panel_overview(
     stats: dict, per_family: pd.DataFrame, sev_df: pd.DataFrame, documented: set[str]
 ) -> None:
+    """Painel "Visão geral": métricas resumo, matriz de priorização (frequência ×
+    severidade × cobertura), ranking de ocorrências por família e a linha do tempo."""
     faults = per_family[per_family["is_fault"]]
     total = int(per_family["count"].sum())
     n_fault = int(faults["count"].sum())
@@ -203,6 +205,8 @@ def _panel_overview(
 
 
 def _priority_matrix(faults: pd.DataFrame, sev_df: pd.DataFrame, documented: set[str]) -> None:
+    """Gráfico de bolhas: eixo X = quantidade de ocorrências, eixo Y = severidade
+    máxima relativa à linha de base. Cor indica se a família já tem documento."""
     if sev_df.empty:
         st.info("Análise de severidade indisponível.")
         return
@@ -260,6 +264,7 @@ def _priority_matrix(faults: pd.DataFrame, sev_df: pd.DataFrame, documented: set
 
 
 def _bar_occurrences(faults: pd.DataFrame, documented: set[str]) -> None:
+    """Gráfico de barras horizontais com o total de ocorrências por família de falha."""
     p = palette()
     df = faults.sort_values("count")
     colors = [p.documented if f in documented else p.undocumented for f in df["family"]]
@@ -278,6 +283,7 @@ def _bar_occurrences(faults: pd.DataFrame, documented: set[str]) -> None:
 
 
 def _timeline(monthly: pd.DataFrame) -> None:
+    """Gráfico de linha com o total de eventos de falha por mês."""
     if monthly.empty:
         st.info("Sem série temporal disponível.")
         return
@@ -303,6 +309,8 @@ def _timeline(monthly: pd.DataFrame) -> None:
 # 2. Severidade & Física
 # --------------------------------------------------------------------------
 def _panel_severity(sev_df: pd.DataFrame, documented: set[str], selection: dict) -> None:
+    """Painel "Severidade & Física": permite alternar entre escala absoluta
+    (zonas ISO 10816) e relativa à linha de base, além do gráfico de validação física."""
     if sev_df.empty:
         st.info("Análise de severidade indisponível — verifique a API e a ingestão.")
         return
@@ -353,6 +361,8 @@ def _panel_severity(sev_df: pd.DataFrame, documented: set[str], selection: dict)
 
 
 def _severity_bars(df: pd.DataFrame, machine_class: str, absolute: bool) -> None:
+    """Barras horizontais de severidade por família, agrupadas por regime de RPM.
+    Em modo absoluto desenha também as faixas das zonas ISO 10816 de fundo."""
     p = palette()
     value_col = "x_p50" if absolute else "relative_severity"
     rpms = sorted(df["rpm"].unique())
@@ -489,6 +499,8 @@ def _physics_chart(sev_df: pd.DataFrame, selection: dict) -> None:
 # 3. Assinaturas
 # --------------------------------------------------------------------------
 def _panel_signatures(signatures: dict, selection: dict) -> None:
+    """Painel "Assinaturas": mapa de calor de z-scores por família e feature,
+    seguido do ranking de poder discriminativo de cada indicador."""
     rows = signatures.get("signatures", [])
     if not rows:
         st.info("Assinaturas indisponíveis — verifique a API.")
@@ -540,6 +552,8 @@ def _panel_signatures(signatures: dict, selection: dict) -> None:
 
 
 def _discriminative_bars(power: list[dict]) -> None:
+    """Barras horizontais do poder discriminativo (razão F) de cada feature,
+    destacando em cinza as quatro que menos separam as famílias de falha."""
     if not power:
         return
     p = palette()
@@ -577,6 +591,8 @@ def _discriminative_bars(power: list[dict]) -> None:
 # 4. Qualidade do modelo
 # --------------------------------------------------------------------------
 def _panel_model_quality(quality: dict) -> None:
+    """Painel "Qualidade do modelo": compara os três protocolos de avaliação do
+    treino e expõe o diagnóstico de vazamento de dados por sessão de coleta."""
     metrics = quality.get("metrics") or {}
     if not metrics:
         st.info("Métricas indisponíveis — execute `python -m src.ml.train`.")
@@ -647,6 +663,7 @@ def _panel_model_quality(quality: dict) -> None:
 
 
 def _f1_by_class(evals: dict) -> None:
+    """Compara o F1 por classe entre os diferentes protocolos de avaliação do modelo."""
     p = palette()
     fig = go.Figure()
     for i, (name, ev) in enumerate(evals.items()):
@@ -674,6 +691,8 @@ def _f1_by_class(evals: dict) -> None:
 
 
 def _feature_importance(importance: list[dict]) -> None:
+    """Barras com as 12 features mais importantes para o LightGBM (a suspeita
+    de vazamento aparece destacada em vermelho)."""
     if not importance:
         return
     p = palette()
@@ -696,6 +715,8 @@ def _feature_importance(importance: list[dict]) -> None:
 
 
 def _leakage_bars(leakage: dict) -> None:
+    """Barras com a razão de dispersão entre campanhas ÷ dentro da campanha,
+    por feature — valores altos indicam vazamento (a feature "identifica a sessão")."""
     features = leakage.get("features", [])
     if not features:
         return
@@ -725,6 +746,7 @@ def _leakage_bars(leakage: dict) -> None:
 
 
 def _alpha(hex_color: str, alpha: float) -> str:
+    """Converte uma cor hexadecimal (#rrggbb) em rgba(...) com a transparência informada."""
     h = hex_color.lstrip("#")
     r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r},{g},{b},{alpha})"

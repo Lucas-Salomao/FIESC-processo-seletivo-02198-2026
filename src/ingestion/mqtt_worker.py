@@ -28,6 +28,9 @@ log = logging.getLogger("mqtt_worker")
 
 
 class IngestionWorker:
+    """Consome telemetria via MQTT e roda o pipeline completo:
+    validar → persistir no banco → diagnosticar → alertar (se for falha)."""
+
     def __init__(self) -> None:
         self.settings = get_settings()
         self.session_factory = get_session_factory()
@@ -45,6 +48,8 @@ class IngestionWorker:
 
     # --- callbacks -----------------------------------------------------
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
+        """Chamado pela biblioteca MQTT quando a conexão com o broker é
+        estabelecida — é aqui que assinamos o tópico de telemetria."""
         log.info(
             "Conectado ao broker (rc=%s); assinando %s",
             reason_code,
@@ -53,6 +58,9 @@ class IngestionWorker:
         client.subscribe(self.settings.mqtt_telemetry_topic, qos=1)
 
     def _on_message(self, client, userdata, msg) -> None:
+        """Chamado a cada mensagem recebida no tópico assinado. Valida o
+        payload contra o schema SensorEvent; se for inválido, manda para a
+        DLQ e para por aqui — caso contrário, segue para persistir e diagnosticar."""
         machine_id = self._machine_from_topic(msg.topic)
         try:
             payload = json.loads(msg.payload)
@@ -66,6 +74,8 @@ class IngestionWorker:
 
     # --- pipeline -------------------------------------------------------
     def _persist(self, event: SensorEvent) -> None:
+        """Grava o evento no banco, já com a família canônica resolvida
+        (quando o payload trouxer uma anotação de falha `fault`)."""
         family_name = None
         if event.fault:
             try:
@@ -89,6 +99,8 @@ class IngestionWorker:
         log.info("Evento %s persistido.", event.id)
 
     def _diagnose_and_alert(self, machine_id: str, event: SensorEvent) -> None:
+        """Chama a própria API (POST /diagnose) para classificar o evento e,
+        se o resultado for uma falha, publica um alerta no tópico da máquina."""
         try:
             response = requests.post(
                 f"{self.settings.api_url}/api/v1/diagnose",
@@ -117,6 +129,8 @@ class IngestionWorker:
             log.info("ALERTA %s → %s", machine_id, diagnosis["predicted_fault"])
 
     def _to_dlq(self, machine_id: str, payload: bytes, reason: str) -> None:
+        """Publica um payload que falhou na validação na dead-letter queue da
+        máquina, junto com o motivo — nada é simplesmente descartado."""
         dlq = {
             "reason": reason[:2000],
             "payload": payload.decode("utf-8", errors="replace")[:5000],
@@ -128,10 +142,12 @@ class IngestionWorker:
     # --- util -------------------------------------------------------------
     @staticmethod
     def _machine_from_topic(topic: str) -> str:
+        """Extrai o identificador da máquina do tópico MQTT (ex.: 'sensors/maquina-01/telemetry' → 'maquina-01')."""
         parts = topic.split("/")
         return parts[1] if len(parts) >= 3 else "unknown"
 
     def run(self) -> None:
+        """Conecta ao broker e fica escutando mensagens indefinidamente (bloqueante)."""
         self.client.connect(self.settings.mqtt_host, self.settings.mqtt_port, keepalive=60)
         log.info(
             "Worker de ingestão iniciado (broker %s:%s).",

@@ -11,6 +11,9 @@ from src.core.config import get_settings
 
 
 class LLMClient(Protocol):
+    """Contrato que qualquer cliente de LLM usado pela aplicação precisa cumprir
+    (a implementação real usa o Gemini; os testes usam um FakeLLM com a mesma interface)."""
+
     def generate(self, prompt: str, system: str | None = None) -> str: ...
     def embed(self, texts: list[str], task_type: str) -> list[list[float]]: ...
     def transcribe(self, image_png: bytes) -> str: ...
@@ -34,6 +37,8 @@ class GeminiClient:
         )
 
     def generate(self, prompt: str, system: str | None = None) -> str:
+        """Gera texto a partir de um prompt, usando `system` como instrução de sistema
+        (ex.: as regras anti-alucinação definidas em src/llm/prompts.py)."""
         from google.genai import types
 
         s = self._settings
@@ -64,6 +69,7 @@ class GeminiClient:
         return response.text or ""
 
     def embed(self, texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
+        """Gera um vetor de embedding para cada texto da lista (mesma ordem de entrada)."""
         from google.genai import types
 
         s = self._settings
@@ -86,4 +92,5 @@ class GeminiClient:
 
 @lru_cache
 def get_llm_client() -> LLMClient:
+    """Devolve a instância única do cliente Gemini (uma por processo)."""
     return GeminiClient()

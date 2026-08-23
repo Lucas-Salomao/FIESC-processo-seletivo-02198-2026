@@ -48,6 +48,11 @@ def zone_bands(machine_class: str = DEFAULT_CLASS) -> list[ZoneBand]:
 
 
 def classify_zone(rms_mm_s: float, machine_class: str = DEFAULT_CLASS) -> str:
+    """Classifica uma leitura de vibração (RMS em mm/s) em uma zona ISO 10816 (A a D).
+
+    Quanto maior a letra, piores as condições: A = recém-comissionada,
+    B = aceitável, C = insatisfatória, D = inaceitável (ver ZONE_MEANING).
+    """
     ab, bc, cd = _limits(machine_class)
     if rms_mm_s <= ab:
         return "A"

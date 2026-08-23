@@ -29,15 +29,25 @@ _EPS = 1e-6
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """Adiciona as features derivadas (recebe DataFrame com FEATURE_COLUMNS)."""
     out = df.copy()
+    # Frequência de rotação em Hz (rpm/60); usa um piso mínimo (_EPS) para
+    # nunca dividir por zero quando a máquina está parada.
     rot_hz = np.maximum(out["rpm"].to_numpy(dtype=float) / 60.0, _EPS)
 
+    # Ordem do pico de vibração = em quantas vezes a rotação aquela frequência
+    # aparece (1x, 2x, ...). _MAX_ORDER evita valores absurdos com rpm ~0.
     out["x_peak_order"] = np.clip(out["x_peak_vel_comp_freq_hz"] / rot_hz, 0, _MAX_ORDER)
     out["z_peak_order"] = np.clip(out["z_peak_vel_comp_freq_hz"] / rot_hz, 0, _MAX_ORDER)
+    # Razão entre vibração radial (X) e axial (Z): ajuda a distinguir
+    # desbalanceamento (radial) de desalinhamento (tem componente axial).
     out["radial_axial_ratio"] = out["x_rms_velocity_mm_s"] / (out["z_rms_velocity_mm_s"] + _EPS)
+    # Razão entre energia de alta frequência e o RMS geral: defeitos de
+    # rolamento tendem a excitar frequências altas, então essa razão sobe.
     out["hf_lf_ratio_x"] = out["x_high_freq_rms_accel_g"] / (out["x_rms_acceleration_g"] + _EPS)
     out["hf_lf_ratio_z"] = out["z_high_freq_rms_accel_g"] / (out["z_rms_acceleration_g"] + _EPS)
     return out
 
 
 def feature_matrix(df: pd.DataFrame) -> np.ndarray:
+    """Junta as features originais com as derivadas e devolve a matriz numérica
+    (linhas = eventos, colunas = MODEL_COLUMNS) que alimenta o modelo."""
     return add_derived_features(df)[MODEL_COLUMNS].to_numpy(dtype=float)

@@ -9,6 +9,8 @@ from src.llm.client import LLMClient, get_llm_client
 
 
 def get_db() -> Generator[Session, None, None]:
+    """Abre uma sessão do banco para a duração de uma requisição e garante
+    que ela seja fechada ao final, mesmo se a rota lançar uma exceção."""
     factory = get_session_factory()
     session = factory()
     try:
@@ -18,6 +20,8 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_llm() -> LLMClient:
+    """Cliente do LLM (Gemini) usado pelos endpoints — nos testes é substituído
+    por um FakeLLMClient via `app.dependency_overrides`."""
     return get_llm_client()
 
 

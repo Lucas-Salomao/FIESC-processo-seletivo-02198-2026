@@ -29,6 +29,10 @@ def _async_db_url(url: str) -> str:
 
 
 class MaintenanceAgent:
+    """Encapsula o LlmAgent do Google ADK: monta o agente com suas 4
+    ferramentas e o Runner responsável por executar cada mensagem do chat
+    mantendo a memória de conversa entre chamadas (por `session_id`)."""
+
     def __init__(self) -> None:
         from google.adk.agents import LlmAgent
         from google.adk.runners import Runner
@@ -77,11 +81,15 @@ class MaintenanceAgent:
         return create_async_engine(async_url)
 
     async def ask(self, message: str, session_id: str | None, user_id: str = "ui") -> ChatResponse:
+        """Envia a mensagem do usuário ao agente e devolve a resposta final,
+        já com as citações coletadas durante o uso das ferramentas (RAG)."""
         from google.genai import types
 
         session_id = session_id or str(uuid.uuid4())
-        reset_citations()
+        reset_citations()  # zera o coletor de citações desta pergunta
 
+        # O ADK emite vários eventos intermediários (chamadas de ferramenta,
+        # passos de raciocínio); só nos interessa o texto da resposta final.
         answer = ""
         async for event in self._runner.run_async(
             user_id=user_id,

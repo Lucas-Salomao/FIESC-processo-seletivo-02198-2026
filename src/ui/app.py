@@ -116,6 +116,8 @@ def _render_status() -> None:
 
 
 def render_diagnosis(data: dict) -> None:
+    """Desenha o resultado de um diagnóstico: métricas principais, histórico de
+    ocorrências similares e, se a falha for documentada, a prescrição de correção."""
     conf_color = {"alta": "green", "media": "orange", "baixa": "red"}[data["confidence"]]
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Tipo de defeito", data["predicted_fault"])
@@ -159,6 +161,8 @@ def render_diagnosis(data: dict) -> None:
 
 
 def tab_diagnose() -> None:
+    """Aba "Diagnóstico": o usuário cola o JSON de um evento de sensor, a UI
+    chama POST /diagnose e mostra o resultado com `render_diagnosis`."""
     st.header("Diagnóstico de novo evento")
     st.caption("Cole o JSON do evento (formato do enunciado) ou use o exemplo.")
 
@@ -199,6 +203,8 @@ SUGGESTED_QUESTIONS = [
 
 
 def tab_chat() -> None:
+    """Aba "Chat": interface de conversa com o assistente. Mantém o histórico
+    e o `session_id` na sessão do Streamlit para o agente ter memória entre mensagens."""
     st.header("Chat prescritivo")
     last = st.session_state.get("last_diagnosis")
     family = None
@@ -265,6 +271,8 @@ def tab_chat() -> None:
 
 
 def tab_documents() -> None:
+    """Aba "Documentos": lista os documentos já cadastrados e traz o formulário
+    para subir um novo PDF de procedimento (POST /documents)."""
     st.header("Base documental")
     try:
         docs = api_get("/documents")

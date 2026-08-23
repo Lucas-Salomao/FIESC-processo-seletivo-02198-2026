@@ -24,6 +24,8 @@ from src.etl.canonize import get_canonizer  # noqa: E402
 
 
 def main(csv_path: Path) -> None:
+    """Lê o banner.csv, resolve as famílias canônicas de todos os rótulos e
+    recarrega as tabelas fault_families, label_map e events no Postgres."""
     canonizer = get_canonizer()
 
     print(f"Lendo {csv_path} ...")

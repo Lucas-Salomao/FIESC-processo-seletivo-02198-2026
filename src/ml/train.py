@@ -45,11 +45,13 @@ RANDOM_STATE = 42
 
 
 def load_dataset(csv_path: Path) -> pd.DataFrame:
+    """Lê o CSV, resolve a família canônica de cada linha e remove
+    duplicatas/registros incompletos. Devolve o DataFrame ordenado por data."""
     canonizer = get_canonizer()
     df = pd.read_csv(csv_path, parse_dates=["created_at"])
     raw = df["fault"].astype(str).str.strip().str.lower()
     mapping = {lbl: canonizer.canonize(lbl).name for lbl in raw.unique()}
-    df["session"] = raw
+    df["session"] = raw  # rótulo bruto = identificador da sessão de coleta
     df["family"] = raw.map(mapping)
     df = df.drop_duplicates(subset=["id"]).dropna(subset=FEATURE_COLUMNS)
     return df.sort_values("created_at").reset_index(drop=True)
@@ -68,13 +70,14 @@ def session_holdout_mask(df: pd.DataFrame, rng: np.random.Generator) -> np.ndarr
 
 
 def _fit_lgbm(x_train: np.ndarray, y_train: np.ndarray) -> LGBMClassifier:
+    """Treina o classificador LightGBM com os hiperparâmetros fixos do projeto."""
     clf = LGBMClassifier(
         n_estimators=400,
         learning_rate=0.08,
         num_leaves=63,
         subsample=0.9,
         colsample_bytree=0.9,
-        class_weight="balanced",
+        class_weight="balanced",  # compensa famílias com poucos exemplos
         random_state=RANDOM_STATE,
         verbose=-1,
     )
@@ -83,6 +86,7 @@ def _fit_lgbm(x_train: np.ndarray, y_train: np.ndarray) -> LGBMClassifier:
 
 
 def _evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    """Calcula as métricas de qualidade do modelo (acurácia e F1, geral e por classe)."""
     labels_present = sorted(set(y_true))
     per_class = f1_score(y_true, y_pred, average=None, labels=labels_present)
     return {
@@ -95,6 +99,12 @@ def _evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 
 
 def train(csv_path: Path, out_dir: Path) -> dict:
+    """Executa o pipeline completo de treino e grava os artefatos em `out_dir`.
+
+    Roda três avaliações diferentes (ver docstring do módulo) só para medir e
+    registrar a qualidade do modelo; o modelo de fato salvo/servido é sempre
+    o treinado com 100% dos dados, ao final da função.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     df = load_dataset(csv_path)
     x = feature_matrix(df)
@@ -130,7 +140,9 @@ def train(csv_path: Path, out_dir: Path) -> dict:
         y[test_mask], clf_nt.predict(scaler_nt.transform(x[test_mask][:, keep]))
     )
 
-    # --- Modelo final servido: 100% dos dados
+    # --- Modelo final servido: treinado com 100% dos dados (sem holdout).
+    # O scaler, o classificador e o índice KNN abaixo são os artefatos que a
+    # API carrega em runtime (ver src/ml/diagnose.py).
     scaler = StandardScaler().fit(x)
     clf = _fit_lgbm(scaler.transform(x), y)
     knn = NearestNeighbors(n_neighbors=KNN_NEIGHBORS, metric="euclidean").fit(scaler.transform(x))
@@ -152,6 +164,7 @@ def train(csv_path: Path, out_dir: Path) -> dict:
         ),
     }
 
+    # Grava os artefatos treinados em disco — é isso que src/ml/diagnose.py carrega.
     joblib.dump(scaler, out_dir / "scaler.joblib")
     joblib.dump(clf, out_dir / "lgbm.joblib")
     joblib.dump(knn, out_dir / "knn.joblib")

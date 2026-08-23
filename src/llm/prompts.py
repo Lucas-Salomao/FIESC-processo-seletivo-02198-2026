@@ -35,6 +35,8 @@ Regras OBRIGATÓRIAS:
 
 
 def build_context_block(chunks: list[dict]) -> str:
+    """Monta o bloco de contexto numerado ([1], [2], ...) a partir dos trechos
+    recuperados do RAG, para inserir no prompt enviado ao LLM."""
     parts = []
     for i, ch in enumerate(chunks, start=1):
         meta = ch["metadata"]
@@ -44,6 +46,8 @@ def build_context_block(chunks: list[dict]) -> str:
 
 
 def build_prescription_prompt(family_display: str, event_summary: str, chunks: list[dict]) -> str:
+    """Monta o prompt usado para gerar as instruções de correção de uma falha
+    (diagnóstico + leituras do evento + trechos dos documentos orientativos)."""
     return f"""## Diagnóstico do sistema
 Falha identificada: **{family_display}**
 
@@ -64,6 +68,8 @@ Referencie os trechos usados com [n]."""
 
 
 def build_chat_prompt(question: str, chunks: list[dict], history: list[dict]) -> str:
+    """Monta o prompt do fallback de chat (sem agente ADK): histórico recente
+    (últimas 6 mensagens) + trechos do RAG + pergunta atual do usuário."""
     hist = "\n".join(f"{m['role']}: {m['content']}" for m in history[-6:]) or "(sem histórico)"
     return f"""## Histórico recente da conversa
 {hist}

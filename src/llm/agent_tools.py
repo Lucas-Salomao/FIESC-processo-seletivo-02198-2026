@@ -27,14 +27,19 @@ _citations: ContextVar[list[dict] | None] = ContextVar("agent_citations", defaul
 
 
 def reset_citations() -> None:
+    """Limpa o coletor de citações — chamado no início de cada pergunta do chat."""
     _citations.set([])
 
 
 def get_citations() -> list[dict]:
+    """Devolve as citações acumuladas durante o processamento da pergunta atual."""
     return _citations.get() or []
 
 
 def _record_citations(chunks: list[dict]) -> None:
+    """Guarda no coletor (ContextVar) a origem de cada trecho retornado pelo RAG,
+    sem duplicar entradas já vistas. É esta lista, e não o texto gerado pelo
+    LLM, que alimenta as citações exibidas na UI."""
     collected = _citations.get()
     if collected is None:
         return
@@ -50,6 +55,7 @@ def _record_citations(chunks: list[dict]) -> None:
 
 
 def _familia_invalida(familia: str) -> dict:
+    """Resposta padrão de erro quando o LLM informa uma família que não existe."""
     validas = sorted(get_canonizer().families)
     return {
         "erro": f"Família '{familia}' não existe.",
@@ -210,4 +216,6 @@ def cobertura_documental() -> dict:
     }
 
 
+# Lista de ferramentas registradas no LlmAgent (src/llm/agent.py). O nome da
+# função e a docstring de cada uma são o que o LLM vê para decidir quando usá-la.
 AGENT_TOOLS = [consultar_historico, buscar_documentos, diagnosticar_evento, cobertura_documental]

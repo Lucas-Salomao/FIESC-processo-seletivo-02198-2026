@@ -20,6 +20,8 @@ UNDOCUMENTED_MSG = (
 
 
 def _citations(chunks: list[dict]) -> list[Citation]:
+    """Converte os chunks recuperados do RAG em citações únicas (sem duplicar
+    a mesma combinação documento/seção/página)."""
     citations = []
     seen = set()
     for ch in chunks:
@@ -34,6 +36,8 @@ def _citations(chunks: list[dict]) -> list[Citation]:
 
 
 def _event_summary(event: SensorEvent) -> str:
+    """Resume as principais leituras do evento em Markdown, para dar contexto
+    ao LLM na hora de gerar a prescrição."""
     return (
         f"- RPM: {event.rpm:.0f}\n"
         f"- Velocidade RMS (mm/s): X={event.x_rms_velocity_mm_s:.2f}, Z={event.z_rms_velocity_mm_s:.2f}\n"
@@ -52,6 +56,8 @@ def prescribe(
     """Retorna (prescrição, None) se a família for documentada; (None, sugestão) caso contrário."""
     display = get_canonizer().families[family].display
 
+    # Guardrail: só chama o LLM se já existir documento para esta família —
+    # sem isso, o sistema jamais "inventaria" um procedimento de correção.
     if not store.is_documented(family):
         return None, UNDOCUMENTED_MSG.format(family=display)
 
@@ -63,6 +69,8 @@ def prescribe(
 
 
 def chat(message: str, family: str | None, history: list[dict], llm: LLMClient) -> ChatResponse:
+    """Responde a uma pergunta do chat usando RAG de um passo (sem agente/ferramentas):
+    busca os trechos relevantes e gera a resposta em uma única chamada ao LLM."""
     canonizer = get_canonizer()
 
     if family and not store.is_documented(family):
@@ -73,6 +81,7 @@ def chat(message: str, family: str | None, history: list[dict], llm: LLMClient) 
         )
 
     if family:
+        # Há um diagnóstico em contexto: busca só nos documentos dessa família.
         chunks = store.retrieve(message, family=family, llm=llm)
     else:
         # sem contexto de diagnóstico: busca nas famílias documentadas mais prováveis

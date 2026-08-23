@@ -25,6 +25,9 @@ from src.etl.canonize import get_canonizer  # noqa: E402
 
 
 def main() -> None:
+    """Lê uma amostra do banner.csv e publica cada linha como evento MQTT,
+    simulando um gateway de aquisição real (ou publica um payload inválido,
+    com --invalid, para demonstrar o fluxo da dead-letter queue)."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", type=Path, default=Path("documentos/banner.csv"))
     parser.add_argument("--machine", default="maquina-01")
