@@ -27,11 +27,17 @@ import {
 const REPO = "Lucas-Salomao/FIESC-processo-seletivo-02198-2026";
 const BRANCH = "main";
 
+// Só publica depois que o CI do GitHub (ruff + pytest + docker build) passar.
+// `rootDirectory` fica no padrão (raiz do repositório) para api, ui e worker:
+// os três compartilham a mesma imagem, construída pelo Dockerfile da raiz.
+// Apontá-lo para a pasta do módulo faz o build sair sem dependência alguma.
+const SOURCE = { branch: BRANCH, checkSuites: true } as const;
+
 export default defineRailway(() => {
   const db = postgres("postgres");
 
   const mosquitto = service("mosquitto", {
-    source: github(REPO, { branch: BRANCH, rootDirectory: "mosquitto" }),
+    source: github(REPO, { ...SOURCE, rootDirectory: "mosquitto" }),
     env: {
       MQTT_USERNAME: preserve(),
       MQTT_PASSWORD: preserve(),
@@ -39,7 +45,7 @@ export default defineRailway(() => {
   });
 
   const api = service("api", {
-    source: github(REPO, { branch: BRANCH }),
+    source: github(REPO, SOURCE),
     // Envolvido em `sh -c` de propósito: o Railway executa o start command
     // diretamente (sem shell), então $PORT não seria expandido.
     start: 'sh -c "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"',
@@ -83,7 +89,7 @@ export default defineRailway(() => {
   // string literal. Em template literal do TypeScript os objetos de referência
   // seriam convertidos para "[object Object]" antes de chegarem ao Railway.
   const ui = service("ui", {
-    source: github(REPO, { branch: BRANCH }),
+    source: github(REPO, SOURCE),
     start:
       'sh -c "streamlit run src/ui/app.py --server.port ${PORT:-8501}' +
       ' --server.address 0.0.0.0 --server.headless true"',
@@ -93,7 +99,7 @@ export default defineRailway(() => {
   });
 
   const worker = service("worker", {
-    source: github(REPO, { branch: BRANCH }),
+    source: github(REPO, SOURCE),
     start: "python -m src.ingestion.mqtt_worker",
     env: {
       DATABASE_URL: db.env.DATABASE_URL,
