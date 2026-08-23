@@ -1,0 +1,10 @@
+# Normaliza fim de linha: o repositório guarda LF; o checkout no Windows
+# converte conforme a configuração local. Evita que o build Linux (CI e
+# Railway) receba scripts com CRLF.
+* text=auto eol=lf
+
+# Binários — nunca converter
+*.png binary
+*.pdf binary
+*.xlsx binary
+*.joblib binary

@@ -1,0 +1,37 @@
+# Contexto de build enxuto: sem isto o Docker enviaria ~1,2 GB (a .venv sozinha
+# tem 1,1 GB), inviabilizando o build remoto.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Segredos — jamais na imagem
+.env
+service-account*.json
+credentials/
+
+# Dados de origem: 52 MB que a aplicação não lê em runtime
+documentos/banner.csv
+documentos/banner.xlsx
+documentos/Prova*
+
+# Índice vetorial: vive em volume persistente, não na imagem
+data/
+
+# Git e docs
+.git/
+.github/
+.railway/
+*.md
+!README.md
+
+# Testes não vão para produção
+tests/
+
+# Local
+images/*.psd
+.vscode/
+.idea/

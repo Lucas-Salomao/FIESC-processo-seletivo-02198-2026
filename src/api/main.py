@@ -1,5 +1,7 @@
 """API de Manutenção Prescritiva — FastAPI."""
 
+import logging
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -16,11 +18,23 @@ from src.llm.client import LLMClient
 from src.ml.diagnose import get_engine_singleton
 from src.rag import service as rag_service
 from src.rag import store as rag_store
+from src.rag.bootstrap import bootstrap_if_empty
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Indexa a base documental se o volume estiver vazio (deploy novo)."""
+    bootstrap_if_empty()
+    yield
+
 
 app = FastAPI(
     title="Manutenção Prescritiva — SENAI SC",
     description="Diagnóstico por similaridade histórica + prescrição via RAG documental",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 API = "/api/v1"

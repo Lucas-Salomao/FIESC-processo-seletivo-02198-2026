@@ -38,6 +38,8 @@ def main() -> None:
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id="fiesc-simulator"
     )
+    if settings.mqtt_username:
+        client.username_pw_set(settings.mqtt_username, settings.mqtt_password)
     client.connect(settings.mqtt_host, settings.mqtt_port)
     client.loop_start()
     topic = f"sensors/{args.machine}/telemetry"

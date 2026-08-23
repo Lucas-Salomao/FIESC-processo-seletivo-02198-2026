@@ -36,6 +36,10 @@ class IngestionWorker:
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id="fiesc-ingestion-worker",
         )
+        if self.settings.mqtt_username:
+            # Broker exposto publicamente roda com autenticação; em
+            # desenvolvimento as credenciais ficam vazias e o acesso é anônimo.
+            self.client.username_pw_set(self.settings.mqtt_username, self.settings.mqtt_password)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
 

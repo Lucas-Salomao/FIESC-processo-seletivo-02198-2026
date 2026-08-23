@@ -14,7 +14,9 @@ credentials/
 service-account*.json
 
 # Artefatos gerados
-artifacts/*.joblib
+# Os .joblib do modelo SÃO versionados (74 MB): a imagem de deploy precisa
+# deles e o build roda a partir do repositório. Em um cenário com mais
+# iterações de modelo, o lugar deles seria um registry de artefatos.
 artifacts/*.pkl
 data/chroma/
 *.log
