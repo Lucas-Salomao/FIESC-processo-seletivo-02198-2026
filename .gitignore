@@ -33,3 +33,9 @@ Thumbs.db
 
 # Enunciado da prova — documento do avaliador, não faz parte do código-fonte
 documentos/Prova*
+
+# Node: usado apenas pelo SDK de infraestrutura como código do Railway
+node_modules/
+
+# Scaffolding de ferramentas de IA (gerado pelo CLI, não é código do projeto)
+.agents/
