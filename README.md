@@ -4,6 +4,7 @@ Solução completa de **manutenção prescritiva** para a prova do processo sele
 
 📐 A arquitetura completa, com diagramas e ADRs, está em [ARCHITECTURE.md](ARCHITECTURE.md).
 📊 A análise exploratória que fundamenta o dashboard — hipóteses, consultas SQL, achados e limitações — está em [ANALYTICS.md](ANALYTICS.md).
+🚀 O provisionamento em nuvem (Railway, infraestrutura como código) está em [DEPLOY.md](DEPLOY.md).
 
 ## Stack
 
