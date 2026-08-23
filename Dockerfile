@@ -27,14 +27,19 @@ COPY documentos/*.pdf ./documentos/
 COPY artifacts ./artifacts
 RUN pip install --no-deps .
 
-# Usuário sem privilégios. O diretório de dados é criado e cedido a ele aqui
-# para que o ponto de montagem do volume já exista com o dono correto.
+# Usuário sem privilégios. A troca de usuário acontece no entrypoint, após
+# o ajuste de dono do volume montado — operação que exige root.
 RUN useradd --create-home --uid 10001 app \
     && mkdir -p /app/data/chroma \
     && chown -R app:app /app
-USER app
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV ARTIFACTS_DIR=/app/artifacts \
     CHROMA_DIR=/app/data/chroma
 
 EXPOSE 8000
+
+# Inicia como root só para ceder o volume ao usuário `app`; o entrypoint
+# baixa privilégios antes de executar o comando do serviço.
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
